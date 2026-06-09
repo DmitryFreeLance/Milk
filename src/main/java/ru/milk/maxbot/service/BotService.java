@@ -138,8 +138,6 @@ public class BotService {
             case "help" -> sendHelp(user);
             case "status:refresh" -> sendEntryPoint(user);
             case "reg:apply" -> startRegistration(user);
-            case "reg:skip-comment" -> askForContact(user);
-            case "reg:skip-contact" -> finalizeRegistration(user);
             case "receipt:new" -> startReceiptFlow(user);
             case "receipt:skip-photo" -> {
                 ConversationSession session = repository.getSession(user.maxUserId());
@@ -291,7 +289,6 @@ public class BotService {
                 return;
             }
             switch (session.state()) {
-                case "REG_COMMENT" -> onRegistrationComment(user, text);
                 case "REG_CONTACT" -> onRegistrationContact(user, attachments);
                 case "RECEIPT_SECTION" -> onReceiptSection(user, text);
                 case "RECEIPT_WEIGHT" -> onReceiptWeight(user, text);
@@ -397,21 +394,10 @@ public class BotService {
                 buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "reg:point:" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 В меню", "nav:home"));
-            sendToUser(user.maxUserId(), """
-                    📍 *Выберите пункт приёмки*
-
-                    Для сотрудников важно сразу указать основной пункт, чтобы приёмка открывалась без лишних шагов.
-                    """, buttons);
+            sendToUser(user.maxUserId(), "Выберите пункт приёмки.", buttons);
         } else {
-            repository.saveSession(user.maxUserId(), "REG_COMMENT", data);
-            sendToUser(user.maxUserId(), """
-                    💬 *Добавьте комментарий*
-
-                    Можно написать уточнение по должности, филиалу или графику работы. Если комментарий не нужен, нажмите кнопку ниже.
-                    """, listOf(
-                    Keyboards.callback("➡️ Продолжить без комментария", "reg:skip-comment"),
-                    Keyboards.callback("🏠 В меню", "nav:home")
-            ));
+            repository.saveSession(user.maxUserId(), "REG_CONTACT", data);
+            askForContact(user);
         }
     }
 
@@ -419,27 +405,6 @@ public class BotService {
         long pointId = parseLong(pointIdRaw);
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("requested_point_id", pointId);
-        repository.saveSession(user.maxUserId(), "REG_COMMENT", data);
-        sendToUser(user.maxUserId(), """
-                💬 *Почти готово*
-
-                Если хотите, добавьте комментарий к заявке. Например: смена, подразделение, кого нужно уведомить.
-                """, listOf(
-                Keyboards.callback("➡️ Продолжить без комментария", "reg:skip-comment"),
-                Keyboards.callback("🏠 В меню", "nav:home")
-        ));
-    }
-
-    private void onRegistrationComment(BotUser user, String text) {
-        if (text.isBlank()) {
-            sendToUser(user.maxUserId(), "Комментарий можно отправить текстом или пропустить кнопкой ниже.", listOf(
-                    Keyboards.callback("➡️ Продолжить без комментария", "reg:skip-comment"),
-                    Keyboards.callback("🏠 В меню", "nav:home")
-            ));
-            return;
-        }
-        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
-        data.put("comment", text);
         repository.saveSession(user.maxUserId(), "REG_CONTACT", data);
         askForContact(user);
     }
@@ -450,10 +415,9 @@ public class BotService {
         sendToUser(user.maxUserId(), """
                 📱 *Контакт для связи*
 
-                Можно поделиться номером прямо из MAX, чтобы администратору было проще подтвердить доступ. Это не обязательно, но удобно.
+                Поделитесь контактом через кнопку ниже. Это обязательный шаг для отправки заявки.
                 """, listOf(
                 Keyboards.contact("📲 Поделиться контактом"),
-                Keyboards.callback("✅ Отправить без номера", "reg:skip-contact"),
                 Keyboards.callback("🏠 В меню", "nav:home")
         ));
     }
@@ -464,10 +428,9 @@ public class BotService {
             sendToUser(user.maxUserId(), """
                     Я жду контакт из кнопки под сообщением.
 
-                    Если номер сейчас не нужен, просто нажмите «Отправить без номера».
+                    Чтобы отправить заявку, нажмите кнопку «Поделиться контактом».
                     """, listOf(
                     Keyboards.contact("📲 Поделиться контактом"),
-                    Keyboards.callback("✅ Отправить без номера", "reg:skip-contact"),
                     Keyboards.callback("🏠 В меню", "nav:home")
             ));
             return;
@@ -1056,7 +1019,7 @@ public class BotService {
                 buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "admin:req:point:" + requestId + ":" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 В панель", "nav:home"));
-            sendToUser(admin.maxUserId(), "Выберите пункт, к которому нужно привязать сотрудника.", buttons);
+            sendToUser(admin.maxUserId(), "Выберите пункт приёмки.", buttons);
             return;
         }
         BotUser target = repository.findUserByRegistrationRequestId(requestId).orElse(null);
@@ -1094,12 +1057,10 @@ public class BotService {
         }
         BotUser refreshed = repository.findUserByMaxId(user.maxUserId()).orElse(user);
         sendToUser(refreshed.maxUserId(), """
-                ✅ *Доступ подтверждён*
+                ✅ Доступ подтвержден
 
-                Администратор одобрил вашу заявку. Назначенная роль: *%s*.
-
-                Рабочее меню уже доступно.
-                """.formatted(role), homeButtons(refreshed));
+                Бот доступен для работы
+                """, homeButtons(refreshed));
     }
 
     private void showUsersAdmin(BotUser admin) {
@@ -1175,7 +1136,7 @@ public class BotService {
                 buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "admin:user:point:" + userId + ":" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 Назад", "admin:users"));
-            sendToUser(admin.maxUserId(), "Выберите пункт для сотрудника.", buttons);
+            sendToUser(admin.maxUserId(), "Выберите пункт приёмки.", buttons);
             return;
         }
         repository.setUserRoleAndPoint(userId, role, null);
@@ -1707,8 +1668,7 @@ public class BotService {
         return Keyboards.inline(listOf(
                 Keyboards.callback("🥛 Принять молоко", "receipt:new"),
                 Keyboards.callback("🧾 Мои записи", "view:my_receipts"),
-                Keyboards.callback("📚 Справочник колхозов", "directory:farms"),
-                Keyboards.callback("🏠 Главное меню", "nav:home")
+                Keyboards.callback("📚 Справочник колхозов", "directory:farms")
         ));
     }
 
@@ -1718,8 +1678,7 @@ public class BotService {
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
                 Keyboards.callback("📈 Excel и графики", "report:excel:start"),
-                Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle"),
-                Keyboards.callback("🏠 Главное меню", "nav:home")
+                Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle")
         ));
     }
 
@@ -1733,8 +1692,7 @@ public class BotService {
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
                 Keyboards.callback("📈 Excel и графики", "report:excel:start"),
-                Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle"),
-                Keyboards.callback("🏠 Главное меню", "nav:home")
+                Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle")
         ));
     }
 
@@ -2022,8 +1980,6 @@ public class BotService {
             case "🧑‍💼 Пользователи" -> "admin:users";
             case "🌾 Колхозы" -> "admin:farms";
             case "✏️ Записи" -> "admin:records";
-            case "➡️ Продолжить без комментария" -> "reg:skip-comment";
-            case "✅ Отправить без номера" -> "reg:skip-contact";
             case "⚠️ Сохранить без фото" -> "receipt:skip-photo";
             case "🏠 Главное меню", "🏠 В меню", "🏠 Назад в панель", "🏠 В панель" -> "nav:home";
             case "🏠 Отменить и выйти" -> "nav:cancel";

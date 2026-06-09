@@ -111,14 +111,12 @@ public final class Texts {
                 Телефон: *%s*
                 Желаемая роль: *%s*
                 Желаемый пункт: *%s*
-                Комментарий: %s
                 """.formatted(
                 request.displayName(),
                 request.maxUserId(),
                 phone,
                 request.requestedRole(),
-                point,
-                request.comment() == null || request.comment().isBlank() ? "без комментария" : request.comment()
+                point
         );
     }
 
