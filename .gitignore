@@ -1,0 +1,9 @@
+/target/
+/data/
+/.idea/
+*.iml
+.DS_Store
+*.log
+*.db
+*.sqlite
+*.sqlite3
