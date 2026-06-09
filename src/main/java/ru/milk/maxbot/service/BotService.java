@@ -99,13 +99,14 @@ public class BotService {
     }
 
     private void handleCallback(BotUser user, JsonNode update) {
-        String callbackId = update.path("callback").path("callback_id").asText();
-        String payload = update.path("callback").path("payload").asText();
+        String callbackId = extractCallbackId(update);
+        String payload = extractCallbackPayload(update);
         if (callbackId != null && !callbackId.isBlank()) {
             safeAnswerCallback(callbackId, "Выполняю команду…");
         }
 
         if (payload == null || payload.isBlank()) {
+            log.warn("Callback payload was empty. Update: {}", update);
             sendToUser(user.maxUserId(), "Не удалось распознать действие. Давайте вернёмся в меню.", homeButtons(user));
             return;
         }
@@ -267,6 +268,9 @@ public class BotService {
         JsonNode attachments = message.path("body").path("attachments");
 
         try {
+            if (handleGlobalCommand(user, text)) {
+                return;
+            }
             switch (session.state()) {
                 case "REG_COMMENT" -> onRegistrationComment(user, text);
                 case "REG_CONTACT" -> onRegistrationContact(user, attachments);
@@ -339,12 +343,13 @@ public class BotService {
         sendToUser(user.maxUserId(), """
                 🙋 *Как работать с ботом*
 
-                • Все кнопки под сообщениями встроенные и идут по одной в строке, чтобы ничего не потерялось.
+                • Все кнопки под сообщениями встроенные. Короткие кнопки могут идти по две в ряд, длинные — по одной, чтобы на телефоне всё читалось аккуратно.
                 • Приёмка проходит пошагово: колхоз → секция → вес → жир → белок → фото → подтверждение.
                 • Один и тот же поставщик в двух секциях заносится двумя записями, а в общей аналитике показатели суммируются автоматически.
                 • Если вы сотрудник, свою запись можно исправить в течение 1 часа.
                 • Администратор может открыть запись повторно, поправить её или убрать из базы.
                 • Директора и гендиректор видят отчёты, зачётный вес, детали по колхозам и Excel-графики.
+                • Для тестирования ролей доверенный пользователь из `BOOTSTRAP_ADMIN_USER_IDS` может использовать команды `/admin`, `/director`, `/gendirector`, `/employee`, `/user`, `/pending`, `/chepas`, `/arat`, `/pilna`, `/role`.
                 """, homeButtons(user));
     }
 
@@ -1529,11 +1534,14 @@ public class BotService {
     }
 
     private long extractMaxUserId(JsonNode update) {
-        long userId = update.path("user").path("user_id").asLong();
-        if (userId != 0L) {
-            return userId;
-        }
-        return update.path("message").path("sender").path("user_id").asLong();
+        long userId = firstNonZero(
+                update.path("user").path("user_id").asLong(),
+                update.path("callback").path("user").path("user_id").asLong(),
+                update.path("callback").path("sender").path("user_id").asLong(),
+                update.path("message").path("sender").path("user_id").asLong(),
+                update.path("message").path("recipient").path("user_id").asLong()
+        );
+        return userId;
     }
 
     private Long extractChatId(JsonNode update) {
@@ -1542,34 +1550,40 @@ public class BotService {
     }
 
     private String extractUsername(JsonNode update) {
-        String username = update.path("user").path("username").asText(null);
-        if (username != null && !username.isBlank()) {
-            return username;
-        }
-        String senderUsername = update.path("message").path("sender").path("username").asText(null);
-        return senderUsername == null || senderUsername.isBlank() ? null : senderUsername;
+        return firstNonBlank(
+                update.path("user").path("username").asText(null),
+                update.path("callback").path("user").path("username").asText(null),
+                update.path("callback").path("sender").path("username").asText(null),
+                update.path("message").path("sender").path("username").asText(null)
+        );
     }
 
     private String extractFirstName(JsonNode update) {
-        String firstName = update.path("user").path("first_name").asText(null);
-        if (firstName != null && !firstName.isBlank()) {
-            return firstName;
-        }
-        String senderFirstName = update.path("message").path("sender").path("first_name").asText(null);
-        return senderFirstName == null || senderFirstName.isBlank() ? null : senderFirstName;
+        return firstNonBlank(
+                update.path("user").path("first_name").asText(null),
+                update.path("user").path("name").asText(null),
+                update.path("callback").path("user").path("first_name").asText(null),
+                update.path("callback").path("user").path("name").asText(null),
+                update.path("callback").path("sender").path("first_name").asText(null),
+                update.path("callback").path("sender").path("name").asText(null),
+                update.path("message").path("sender").path("first_name").asText(null),
+                update.path("message").path("sender").path("name").asText(null)
+        );
     }
 
     private String extractLastName(JsonNode update) {
-        String lastName = update.path("user").path("last_name").asText(null);
-        if (lastName != null && !lastName.isBlank()) {
-            return lastName;
-        }
-        String senderLastName = update.path("message").path("sender").path("last_name").asText(null);
-        return senderLastName == null || senderLastName.isBlank() ? null : senderLastName;
+        return firstNonBlank(
+                update.path("user").path("last_name").asText(null),
+                update.path("callback").path("user").path("last_name").asText(null),
+                update.path("callback").path("sender").path("last_name").asText(null),
+                update.path("message").path("sender").path("last_name").asText(null)
+        );
     }
 
     private boolean isFromBot(JsonNode update) {
         return update.path("user").path("is_bot").asBoolean(false)
+                || update.path("callback").path("user").path("is_bot").asBoolean(false)
+                || update.path("callback").path("sender").path("is_bot").asBoolean(false)
                 || update.path("message").path("sender").path("is_bot").asBoolean(false);
     }
 
@@ -1687,5 +1701,218 @@ public class BotService {
 
     private String textOrNull(ObjectNode data, String field) {
         return data.hasNonNull(field) ? data.get(field).asText() : null;
+    }
+
+    private boolean handleGlobalCommand(BotUser user, String text) {
+        if (text == null || text.isBlank() || !text.startsWith("/")) {
+            return false;
+        }
+
+        String command = text.trim().toLowerCase();
+        return switch (command) {
+            case "/start" -> {
+                sendEntryPoint(user);
+                yield true;
+            }
+            case "/role", "/whoami" -> {
+                sendRoleStatus(user);
+                yield true;
+            }
+            case "/switchhelp", "/testhelp" -> {
+                sendSwitcherHelp(user);
+                yield true;
+            }
+            case "/admin" -> {
+                switchRoleForTesting(user, UserRole.ADMINISTRATOR);
+                yield true;
+            }
+            case "/director" -> {
+                switchRoleForTesting(user, UserRole.DIRECTOR);
+                yield true;
+            }
+            case "/gendirector", "/ceo" -> {
+                switchRoleForTesting(user, UserRole.GENERAL_DIRECTOR);
+                yield true;
+            }
+            case "/employee", "/user" -> {
+                switchRoleForTesting(user, UserRole.EMPLOYEE);
+                yield true;
+            }
+            case "/pending" -> {
+                switchRoleForTesting(user, UserRole.PENDING);
+                yield true;
+            }
+            case "/chepas" -> {
+                switchPointForTesting(user, "Чепас");
+                yield true;
+            }
+            case "/arat", "/bigar", "/arath" -> {
+                switchPointForTesting(user, "Большая Арать");
+                yield true;
+            }
+            case "/pilna" -> {
+                switchPointForTesting(user, "Пильна");
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
+    private void switchRoleForTesting(BotUser user, UserRole role) {
+        if (!isTestSwitcherAllowed(user)) {
+            sendToUser(user.maxUserId(), """
+                    ⛔ Команда тестового переключения ролей недоступна.
+
+                    Она работает только для пользователей, чьи MAX ID указаны в `BOOTSTRAP_ADMIN_USER_IDS`.
+                    """, homeButtons(user));
+            return;
+        }
+
+        Long pointId = switch (role) {
+            case EMPLOYEE -> resolveTestingPointId(user);
+            case PENDING, DIRECTOR, GENERAL_DIRECTOR, ADMINISTRATOR -> null;
+        };
+
+        repository.setUserRoleAndPoint(user.id(), role, pointId);
+        clearSession(user);
+        BotUser refreshed = repository.findUserByMaxId(user.maxUserId()).orElse(user);
+
+        String pointText = refreshed.receivingPointId() == null
+                ? "не назначен"
+                : repository.findPoint(refreshed.receivingPointId()).map(ReceivingPoint::name).orElse("не найден");
+
+        sendToUser(refreshed.maxUserId(), """
+                🧪 *Тестовая роль переключена*
+
+                Новая роль: *%s*
+                Пункт приёмки: *%s*
+
+                Открываю меню этой роли.
+                """.formatted(role, pointText), homeButtons(refreshed));
+    }
+
+    private void switchPointForTesting(BotUser user, String pointName) {
+        if (!isTestSwitcherAllowed(user)) {
+            sendToUser(user.maxUserId(), """
+                    ⛔ Команда тестового переключения пункта недоступна.
+
+                    Она работает только для пользователей, чьи MAX ID указаны в `BOOTSTRAP_ADMIN_USER_IDS`.
+                    """, homeButtons(user));
+            return;
+        }
+
+        ReceivingPoint point = repository.listPoints().stream()
+                .filter(it -> it.name().equalsIgnoreCase(pointName))
+                .findFirst()
+                .orElseThrow();
+
+        UserRole targetRole = user.role() == UserRole.PENDING ? UserRole.EMPLOYEE : user.role();
+        if (targetRole != UserRole.EMPLOYEE) {
+            targetRole = UserRole.EMPLOYEE;
+        }
+
+        repository.setUserRoleAndPoint(user.id(), targetRole, point.id());
+        clearSession(user);
+        BotUser refreshed = repository.findUserByMaxId(user.maxUserId()).orElse(user);
+        sendToUser(refreshed.maxUserId(), """
+                📍 *Тестовый пункт переключён*
+
+                Теперь ваш пункт приёмки: *%s*.
+                Для удобства роль автоматически приведена к *EMPLOYEE*, чтобы вы могли сразу тестировать приёмку.
+                """.formatted(point.name()), homeButtons(refreshed));
+    }
+
+    private void sendRoleStatus(BotUser user) {
+        String pointName = user.receivingPointId() == null
+                ? "не назначен"
+                : repository.findPoint(user.receivingPointId()).map(ReceivingPoint::name).orElse("не найден");
+        sendToUser(user.maxUserId(), """
+                👤 *Текущий профиль*
+
+                MAX ID: `%s`
+                Роль: *%s*
+                Пункт приёмки: *%s*
+                Доступ к тест-переключению: *%s*
+                """.formatted(
+                user.maxUserId(),
+                user.role(),
+                pointName,
+                isTestSwitcherAllowed(user) ? "да" : "нет"
+        ), homeButtons(user));
+    }
+
+    private void sendSwitcherHelp(BotUser user) {
+        String extra = isTestSwitcherAllowed(user)
+                ? """
+                Доступные команды:
+                • `/admin`
+                • `/director`
+                • `/gendirector`
+                • `/employee`
+                • `/user`
+                • `/pending`
+                • `/chepas`
+                • `/arat`
+                • `/pilna`
+                • `/role`
+                """
+                : "Тестовые команды сейчас недоступны для этого профиля.";
+
+        sendToUser(user.maxUserId(), """
+                🧪 *Тестирование ролей и пунктов*
+
+                %s
+                """.formatted(extra), homeButtons(user));
+    }
+
+    private boolean isTestSwitcherAllowed(BotUser user) {
+        return config.bootstrapAdminUserIds().contains(user.maxUserId());
+    }
+
+    private Long resolveTestingPointId(BotUser user) {
+        if (user.receivingPointId() != null) {
+            return user.receivingPointId();
+        }
+        return repository.listPoints().stream().findFirst().map(ReceivingPoint::id).orElse(null);
+    }
+
+    private String extractCallbackId(JsonNode update) {
+        return firstNonBlank(
+                update.path("callback").path("callback_id").asText(null),
+                update.path("callback_id").asText(null)
+        );
+    }
+
+    private String extractCallbackPayload(JsonNode update) {
+        JsonNode callbackPayload = update.path("callback").path("payload");
+        if (callbackPayload.isTextual() && !callbackPayload.asText().isBlank()) {
+            return callbackPayload.asText();
+        }
+        if (callbackPayload.isObject() && callbackPayload.hasNonNull("payload")) {
+            String nestedPayload = callbackPayload.path("payload").asText(null);
+            if (nestedPayload != null && !nestedPayload.isBlank()) {
+                return nestedPayload;
+            }
+        }
+        String directPayload = update.path("payload").asText(null);
+        return directPayload == null || directPayload.isBlank() ? null : directPayload;
+    }
+
+    private long firstNonZero(long... values) {
+        for (long value : values) {
+            if (value != 0L) {
+                return value;
+            }
+        }
+        return 0L;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 }
