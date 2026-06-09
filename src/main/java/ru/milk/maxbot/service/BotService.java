@@ -37,6 +37,7 @@ import java.util.regex.Pattern;
 public class BotService {
     private static final Logger log = LoggerFactory.getLogger(BotService.class);
     private static final Pattern PHONE_PATTERN = Pattern.compile("TEL[^:]*:([+\\d]+)");
+    private static final ThreadLocal<CallbackReplyContext> CALLBACK_REPLY_CONTEXT = new ThreadLocal<>();
 
     private final AppConfig config;
     private final BotRepository repository;
@@ -101,25 +102,37 @@ public class BotService {
     private void handleCallback(BotUser user, JsonNode update) {
         String callbackId = extractCallbackId(update);
         String payload = extractCallbackPayload(update);
-        if (callbackId != null && !callbackId.isBlank()) {
-            safeAnswerCallback(callbackId, "Выполняю команду…");
-        }
-
         if (payload == null || payload.isBlank()) {
             log.warn("Callback payload was empty. Update: {}", update);
+            if (callbackId != null && !callbackId.isBlank()) {
+                safeAnswerCallback(callbackId, "Не удалось распознать команду");
+            }
             sendToUser(user.maxUserId(), "Не удалось распознать действие. Давайте вернёмся в меню.", homeButtons(user));
             return;
         }
 
         try {
+            if (callbackId != null && !callbackId.isBlank()) {
+                CALLBACK_REPLY_CONTEXT.set(new CallbackReplyContext(callbackId, user.maxUserId(), false));
+            }
             dispatchCallback(user, payload);
+            CallbackReplyContext context = CALLBACK_REPLY_CONTEXT.get();
+            if (context != null && !context.used()) {
+                safeAnswerCallback(context.callbackId(), "Готово");
+            }
         } catch (Exception e) {
             log.error("Callback handling failed for payload {}", payload, e);
+            CallbackReplyContext context = CALLBACK_REPLY_CONTEXT.get();
+            if (context != null && !context.used()) {
+                safeAnswerCallback(context.callbackId(), "Произошла ошибка");
+            }
             sendToUser(user.maxUserId(), """
                     ⚠️ Что-то пошло не так при обработке команды.
 
                     Я уже вернул вас в безопасное меню, чтобы работа не остановилась.
                     """, homeButtons(user));
+        } finally {
+            CALLBACK_REPLY_CONTEXT.remove();
         }
     }
 
@@ -1505,6 +1518,14 @@ public class BotService {
         }
     }
 
+    private void safeAnswerCallback(String callbackId, OutgoingMessage message, String notification) {
+        try {
+            maxApiClient.answerCallback(callbackId, message, notification);
+        } catch (Exception e) {
+            log.warn("Failed to answer callback {} with message", callbackId, e);
+        }
+    }
+
     private Optional<JsonNode> findImageAttachment(JsonNode attachments) {
         if (attachments == null || !attachments.isArray()) {
             return Optional.empty();
@@ -1652,7 +1673,14 @@ public class BotService {
     }
 
     private void sendToUser(long maxUserId, String text, ArrayNode attachments) {
-        maxApiClient.sendToUser(maxUserId, OutgoingMessage.markdown(text, attachments));
+        OutgoingMessage message = OutgoingMessage.markdown(text, attachments);
+        CallbackReplyContext context = CALLBACK_REPLY_CONTEXT.get();
+        if (context != null && !context.used() && context.maxUserId() == maxUserId) {
+            safeAnswerCallback(context.callbackId(), message, null);
+            CALLBACK_REPLY_CONTEXT.set(context.markUsed());
+            return;
+        }
+        maxApiClient.sendToUser(maxUserId, message);
     }
 
     private void sendToUser(long maxUserId, String text, List<ObjectNode> buttons) {
@@ -1914,5 +1942,11 @@ public class BotService {
             }
         }
         return null;
+    }
+
+    private record CallbackReplyContext(String callbackId, long maxUserId, boolean used) {
+        private CallbackReplyContext markUsed() {
+            return new CallbackReplyContext(callbackId, maxUserId, true);
+        }
     }
 }

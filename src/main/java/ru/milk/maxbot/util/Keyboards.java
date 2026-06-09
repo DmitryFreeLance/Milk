@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class Keyboards {
-    private static final int COMPACT_TEXT_LIMIT = 18;
+    private static final int COMPACT_TEXT_LIMIT = 14;
 
     private Keyboards() {
     }

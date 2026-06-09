@@ -59,8 +59,24 @@ public class MaxApiClient {
     }
 
     public void answerCallback(String callbackId, String notification) {
+        answerCallback(callbackId, null, notification);
+    }
+
+    public void answerCallback(String callbackId, OutgoingMessage message, String notification) {
         String uri = API_BASE + "/answers?callback_id=" + urlEncode(callbackId);
         ObjectNode body = Jsons.object();
+        if (message != null) {
+            ObjectNode messageBody = Jsons.object();
+            messageBody.put("text", message.text());
+            messageBody.put("notify", message.notifyRecipients());
+            if (message.attachments() != null) {
+                messageBody.set("attachments", message.attachments());
+            }
+            if (message.format() != null && !message.format().isBlank()) {
+                messageBody.put("format", message.format());
+            }
+            body.set("message", messageBody);
+        }
         if (notification != null && !notification.isBlank()) {
             body.put("notification", notification);
         }
