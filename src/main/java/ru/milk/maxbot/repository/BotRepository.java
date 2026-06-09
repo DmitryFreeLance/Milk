@@ -116,6 +116,21 @@ public class BotRepository {
         return queryUsers("SELECT * FROM users ORDER BY display_name");
     }
 
+    public int countUsers() {
+        return countBySql("SELECT COUNT(*) FROM users");
+    }
+
+    public List<BotUser> listUsersPage(int limit, int offset) {
+        String sql = "SELECT * FROM users ORDER BY display_name LIMIT ? OFFSET ?";
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, offset);
+            return executeUserList(ps);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list users page", e);
+        }
+    }
+
     public void setUserRoleAndPoint(long userId, UserRole role, Long pointId) {
         String sql = """
                 UPDATE users
@@ -547,6 +562,34 @@ public class BotRepository {
         }
     }
 
+    public int countReceiptsForUser(long userId) {
+        String sql = "SELECT COUNT(*) FROM milk_receipts WHERE created_by_user_id = ? AND deleted = 0";
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count user receipts", e);
+        }
+    }
+
+    public List<MilkReceipt> listReceiptsForUserPage(long userId, int limit, int offset) {
+        String sql = baseReceiptSelect() + """
+                 WHERE mr.created_by_user_id = ? AND mr.deleted = 0
+                 ORDER BY mr.created_at DESC
+                 LIMIT ? OFFSET ?
+                """;
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, userId);
+            ps.setInt(2, limit);
+            ps.setInt(3, offset);
+            return executeReceiptList(ps);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list user receipts page", e);
+        }
+    }
+
     public List<MilkReceipt> listReceipts(LocalDate start, LocalDate end, Long pointId, Long farmId, boolean includeDeleted) {
         StringBuilder sql = new StringBuilder(baseReceiptSelect())
                 .append(" WHERE mr.delivery_date BETWEEN ? AND ? ");
@@ -823,6 +866,26 @@ public class BotRepository {
             return users;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to query users", e);
+        }
+    }
+
+    private List<BotUser> executeUserList(PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            List<BotUser> users = new ArrayList<>();
+            while (rs.next()) {
+                users.add(mapUser(rs));
+            }
+            return users;
+        }
+    }
+
+    private int countBySql(String sql) {
+        try (Connection connection = database.getConnection();
+             PreparedStatement ps = connection.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count rows", e);
         }
     }
 

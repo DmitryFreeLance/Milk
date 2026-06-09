@@ -29,6 +29,7 @@ public class MaxApiClient {
     public MaxApiClient(String token) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(20))
+                .version(HttpClient.Version.HTTP_1_1)
                 .build();
         this.token = token;
     }
@@ -44,7 +45,10 @@ public class MaxApiClient {
             params.add("types=" + urlEncode(String.join(",", types)));
         }
         String uri = API_BASE + "/updates" + (params.isEmpty() ? "" : "?" + String.join("&", params));
-        HttpRequest request = baseRequest(URI.create(uri)).GET().build();
+        HttpRequest request = baseRequest(URI.create(uri))
+                .timeout(Duration.ofSeconds(Math.max(timeoutSeconds + 20L, 45L)))
+                .GET()
+                .build();
         return sendJson(request);
     }
 
@@ -115,7 +119,7 @@ public class MaxApiClient {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Jsons.write(body)))
                 .build();
-        return sendJson(request);
+        return containsFileAttachment(message) ? sendJsonWithAttachmentRetry(request) : sendJson(request);
     }
 
     private HttpRequest.Builder baseRequest(URI uri) {
@@ -140,6 +144,47 @@ public class MaxApiClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("MAX API request interrupted", e);
+        }
+    }
+
+    private JsonNode sendJsonWithAttachmentRetry(HttpRequest request) {
+        int maxAttempts = 8;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return sendJson(request);
+            } catch (IllegalStateException e) {
+                if (!isAttachmentNotReadyError(e) || attempt == maxAttempts) {
+                    throw e;
+                }
+                sleepQuietly(300L * attempt);
+            }
+        }
+        throw new IllegalStateException("Attachment retry loop exited unexpectedly");
+    }
+
+    private boolean containsFileAttachment(OutgoingMessage message) {
+        if (message.attachments() == null) {
+            return false;
+        }
+        for (JsonNode attachment : message.attachments()) {
+            if ("file".equalsIgnoreCase(attachment.path("type").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isAttachmentNotReadyError(IllegalStateException error) {
+        String message = error.getMessage();
+        return message != null && message.contains("attachment.not.ready");
+    }
+
+    private void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting attachment processing", e);
         }
     }
 

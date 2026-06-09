@@ -37,6 +37,9 @@ import java.util.regex.Pattern;
 public class BotService {
     private static final Logger log = LoggerFactory.getLogger(BotService.class);
     private static final Pattern PHONE_PATTERN = Pattern.compile("TEL[^:]*:([+\\d]+)");
+    private static final int USERS_PAGE_SIZE = 10;
+    private static final int RECEIPTS_PAGE_SIZE = 8;
+    private static final int RECORDS_PAGE_SIZE = 8;
 
     private final AppConfig config;
     private final BotRepository repository;
@@ -141,6 +144,7 @@ public class BotService {
             case "receipt:skip-photo" -> {
                 ConversationSession session = repository.getSession(user.maxUserId());
                 ObjectNode data = editableData(session);
+                data.remove("draft_edit_field");
                 data.put("photo_status", "MISSING");
                 repository.saveSession(user.maxUserId(), "RECEIPT_CONFIRM", data);
                 sendReceiptConfirmation(user, data);
@@ -207,6 +211,10 @@ public class BotService {
             showUserAdminCard(user, parseLong(payload.substring("admin:user:view:".length())));
             return;
         }
+        if (payload.startsWith("admin:users:page:")) {
+            showUsersAdmin(user, parseIntSafe(payload.substring("admin:users:page:".length()), 0));
+            return;
+        }
         if (payload.startsWith("admin:user:role:")) {
             changeUserRole(user, payload.substring("admin:user:role:".length()));
             return;
@@ -225,6 +233,10 @@ public class BotService {
         }
         if (payload.startsWith("admin:records:date:")) {
             showAdminRecordsForDate(user, payload.substring("admin:records:date:".length()));
+            return;
+        }
+        if (payload.startsWith("view:my_receipts:page:")) {
+            showMyReceipts(user, parseIntSafe(payload.substring("view:my_receipts:page:".length()), 0));
             return;
         }
         if (payload.startsWith("admin:record:view:")) {
@@ -382,7 +394,7 @@ public class BotService {
             repository.saveSession(user.maxUserId(), "REG_POINT", data);
             List<ObjectNode> buttons = new ArrayList<>();
             for (ReceivingPoint point : repository.listPoints()) {
-                buttons.add(Keyboards.callback("📍 " + point.name(), "reg:point:" + point.id()));
+                buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "reg:point:" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 В меню", "nav:home"));
             sendToUser(user.maxUserId(), """
@@ -518,6 +530,10 @@ public class BotService {
         long farmId = parseLong(farmIdRaw);
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("farm_id", farmId);
+        if (isDraftEditField(data, "farm")) {
+            finishDraftEdit(user, data);
+            return;
+        }
         repository.saveSession(user.maxUserId(), "RECEIPT_SECTION", data);
         sendToUser(user.maxUserId(), """
                 🚚 *Шаг 2 из 6*
@@ -540,6 +556,10 @@ public class BotService {
         }
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("section_label", text.trim());
+        if (isDraftEditField(data, "section")) {
+            finishDraftEdit(user, data);
+            return;
+        }
         repository.saveSession(user.maxUserId(), "RECEIPT_WEIGHT", data);
         sendToUser(user.maxUserId(), """
                 ⚖️ *Шаг 3 из 6*
@@ -559,6 +579,10 @@ public class BotService {
         }
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("weight_kg", value);
+        if (isDraftEditField(data, "weight")) {
+            finishDraftEdit(user, data);
+            return;
+        }
         repository.saveSession(user.maxUserId(), "RECEIPT_FAT", data);
         sendToUser(user.maxUserId(), """
                 🧪 *Шаг 4 из 6*
@@ -578,6 +602,10 @@ public class BotService {
         }
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("fat_percent", value);
+        if (isDraftEditField(data, "fat")) {
+            finishDraftEdit(user, data);
+            return;
+        }
         repository.saveSession(user.maxUserId(), "RECEIPT_PROTEIN", data);
         sendToUser(user.maxUserId(), """
                 🧬 *Шаг 5 из 6*
@@ -597,6 +625,10 @@ public class BotService {
         }
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("protein_percent", value);
+        if (isDraftEditField(data, "protein")) {
+            finishDraftEdit(user, data);
+            return;
+        }
         repository.saveSession(user.maxUserId(), "RECEIPT_PHOTO", data);
         sendToUser(user.maxUserId(), """
                 📷 *Шаг 6 из 6*
@@ -633,6 +665,10 @@ public class BotService {
         String originalMessageId = body.path("mid").asText("");
         if (!originalMessageId.isBlank()) {
             data.put("original_message_id", originalMessageId);
+        }
+        if (isDraftEditField(data, "photo")) {
+            finishDraftEdit(user, data);
+            return;
         }
         repository.saveSession(user.maxUserId(), "RECEIPT_CONFIRM", data);
         sendReceiptConfirmation(user, data);
@@ -693,6 +729,7 @@ public class BotService {
         ObjectNode data = editableData(session);
         switch (field) {
             case "farm" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_FARM", data);
                 List<ObjectNode> buttons = new ArrayList<>();
                 for (Farm farm : repository.listFarms(true)) {
@@ -702,22 +739,27 @@ public class BotService {
                 sendToUser(user.maxUserId(), "Выберите новый колхоз для черновика записи.", buttons);
             }
             case "section" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_SECTION", data);
                 sendToUser(user.maxUserId(), "Напишите новую секцию текстом.", listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
             }
             case "weight" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_WEIGHT", data);
                 sendToUser(user.maxUserId(), "Введите новый вес в килограммах.", listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
             }
             case "fat" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_FAT", data);
                 sendToUser(user.maxUserId(), "Введите новый показатель жира.", listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
             }
             case "protein" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_PROTEIN", data);
                 sendToUser(user.maxUserId(), "Введите новый показатель белка.", listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
             }
             case "photo" -> {
+                data.put("draft_edit_field", field);
                 repository.saveSession(user.maxUserId(), "RECEIPT_PHOTO", data);
                 sendToUser(user.maxUserId(), "Прикрепите новую фотографию накладной.", listOf(
                         Keyboards.callback("⚠️ Сохранить без фото", "receipt:skip-photo"),
@@ -757,7 +799,16 @@ public class BotService {
     }
 
     private void showMyReceipts(BotUser user) {
-        List<MilkReceipt> receipts = repository.listRecentReceiptsForUser(user.id(), 10);
+        showMyReceipts(user, 0);
+    }
+
+    private void showMyReceipts(BotUser user, int page) {
+        int safePage = Math.max(page, 0);
+        int total = repository.countReceiptsForUser(user.id());
+        if (total > 0 && safePage * RECEIPTS_PAGE_SIZE >= total) {
+            safePage = 0;
+        }
+        List<MilkReceipt> receipts = repository.listReceiptsForUserPage(user.id(), RECEIPTS_PAGE_SIZE, safePage * RECEIPTS_PAGE_SIZE);
         if (receipts.isEmpty()) {
             sendToUser(user.maxUserId(), """
                     Пока у вас нет сохранённых записей.
@@ -776,6 +827,7 @@ public class BotService {
                     "view:receipt:" + receipt.id()
             ));
         }
+        appendPageButtons(buttons, safePage, total, RECEIPTS_PAGE_SIZE, "view:my_receipts:page:");
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(user.maxUserId(), "🧾 *Ваши последние записи*\n\nВыберите запись, чтобы открыть карточку и при необходимости отредактировать её.", buttons);
     }
@@ -1001,7 +1053,7 @@ public class BotService {
         if (role == UserRole.EMPLOYEE) {
             List<ObjectNode> buttons = new ArrayList<>();
             for (ReceivingPoint point : repository.listPoints()) {
-                buttons.add(Keyboards.callback("📍 " + point.name(), "admin:req:point:" + requestId + ":" + point.id()));
+                buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "admin:req:point:" + requestId + ":" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 В панель", "nav:home"));
             sendToUser(admin.maxUserId(), "Выберите пункт, к которому нужно привязать сотрудника.", buttons);
@@ -1051,14 +1103,24 @@ public class BotService {
     }
 
     private void showUsersAdmin(BotUser admin) {
+        showUsersAdmin(admin, 0);
+    }
+
+    private void showUsersAdmin(BotUser admin, int page) {
         if (!admin.role().isAdmin()) {
             sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
             return;
         }
+        int safePage = Math.max(page, 0);
+        int total = repository.countUsers();
+        if (total > 0 && safePage * USERS_PAGE_SIZE >= total) {
+            safePage = 0;
+        }
         List<ObjectNode> buttons = new ArrayList<>();
-        for (BotUser user : repository.listUsers()) {
+        for (BotUser user : repository.listUsersPage(USERS_PAGE_SIZE, safePage * USERS_PAGE_SIZE)) {
             buttons.add(Keyboards.callback((user.active() ? "👤 " : "🚫 ") + user.displayName() + " • " + user.role(), "admin:user:view:" + user.id()));
         }
+        appendPageButtons(buttons, safePage, total, USERS_PAGE_SIZE, "admin:users:page:");
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(admin.maxUserId(), "👥 *Пользователи системы*\n\nВыберите человека, чтобы изменить роль, пункт или активность.", buttons);
     }
@@ -1110,7 +1172,7 @@ public class BotService {
         if (role == UserRole.EMPLOYEE) {
             List<ObjectNode> buttons = new ArrayList<>();
             for (ReceivingPoint point : repository.listPoints()) {
-                buttons.add(Keyboards.callback("📍 " + point.name(), "admin:user:point:" + userId + ":" + point.id()));
+                buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "admin:user:point:" + userId + ":" + point.id()));
             }
             buttons.add(Keyboards.callback("🏠 Назад", "admin:users"));
             sendToUser(admin.maxUserId(), "Выберите пункт для сотрудника.", buttons);
@@ -1215,8 +1277,17 @@ public class BotService {
     }
 
     private void showAdminRecordsForDate(BotUser admin, String dateRaw) {
+        showAdminRecordsForDate(admin, dateRaw, 0);
+    }
+
+    private void showAdminRecordsForDate(BotUser admin, String dateRaw, int page) {
         if (!admin.role().isAdmin()) {
             sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        if (dateRaw.contains(":page:")) {
+            String[] parts = dateRaw.split(":page:");
+            showAdminRecordsForDate(admin, parts[0], parseIntSafe(parts[1], 0));
             return;
         }
         if ("custom".equals(dateRaw)) {
@@ -1232,10 +1303,18 @@ public class BotService {
             sendToUser(admin.maxUserId(), "За " + Dates.formatDate(date) + " записей не найдено.", adminButtons());
             return;
         }
+        int safePage = Math.max(page, 0);
+        int from = safePage * RECORDS_PAGE_SIZE;
+        if (from >= receipts.size()) {
+            safePage = 0;
+            from = 0;
+        }
+        int to = Math.min(from + RECORDS_PAGE_SIZE, receipts.size());
         List<ObjectNode> buttons = new ArrayList<>();
-        for (MilkReceipt receipt : receipts) {
+        for (MilkReceipt receipt : receipts.subList(from, to)) {
             buttons.add(Keyboards.callback("🧾 " + receipt.pointName() + " • " + receipt.farmName() + " • " + receipt.sectionLabel(), "admin:record:view:" + receipt.id()));
         }
+        appendPageButtons(buttons, safePage, receipts.size(), RECORDS_PAGE_SIZE, "admin:records:date:" + date + ":page:");
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(admin.maxUserId(), "✏️ *Записи за " + Dates.formatDate(date) + "*\n\nВыберите карточку для редактирования или удаления.", buttons);
     }
@@ -1323,7 +1402,7 @@ public class BotService {
         repository.saveSession(user.maxUserId(), "REPORT_POINT_SELECT", data);
         List<ObjectNode> buttons = new ArrayList<>();
         for (ReceivingPoint point : repository.listPoints()) {
-            buttons.add(Keyboards.callback("🏭 " + point.name(), "report:point:id:" + point.id()));
+            buttons.add(Keyboards.callback("🏭 Пункт: " + point.name(), "report:point:id:" + point.id()));
         }
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(user.maxUserId(), "🏭 *Выберите пункт приёмки*\n\nПокажу сводку за день или за период с разбивкой по колхозам.", buttons);
@@ -1613,16 +1692,14 @@ public class BotService {
     private ArrayNode unknownButtons() {
         return Keyboards.inline(listOf(
                 Keyboards.callback("🚀 Начать", "start"),
-                Keyboards.callback("📝 Подать заявку", "reg:apply"),
-                Keyboards.callback("🙋 Помощь", "help")
+                Keyboards.callback("📝 Подать заявку", "reg:apply")
         ));
     }
 
     private ArrayNode pendingButtons() {
         return Keyboards.inline(listOf(
                 Keyboards.callback("🔄 Обновить статус", "status:refresh"),
-                Keyboards.callback("📝 Изменить заявку", "reg:apply"),
-                Keyboards.callback("🙋 Помощь", "help")
+                Keyboards.callback("📝 Изменить заявку", "reg:apply")
         ));
     }
 
@@ -1631,7 +1708,7 @@ public class BotService {
                 Keyboards.callback("🥛 Принять молоко", "receipt:new"),
                 Keyboards.callback("🧾 Мои записи", "view:my_receipts"),
                 Keyboards.callback("📚 Справочник колхозов", "directory:farms"),
-                Keyboards.callback("🙋 Помощь", "help")
+                Keyboards.callback("🏠 Главное меню", "nav:home")
         ));
     }
 
@@ -1642,7 +1719,7 @@ public class BotService {
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
                 Keyboards.callback("📈 Excel и графики", "report:excel:start"),
                 Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle"),
-                Keyboards.callback("🙋 Помощь", "help")
+                Keyboards.callback("🏠 Главное меню", "nav:home")
         ));
     }
 
@@ -1657,7 +1734,7 @@ public class BotService {
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
                 Keyboards.callback("📈 Excel и графики", "report:excel:start"),
                 Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle"),
-                Keyboards.callback("🙋 Помощь", "help")
+                Keyboards.callback("🏠 Главное меню", "nav:home")
         ));
     }
 
@@ -1932,7 +2009,6 @@ public class BotService {
         return switch (text) {
             case "🚀 Начать" -> "start";
             case "📝 Подать заявку", "📝 Изменить заявку" -> "reg:apply";
-            case "🙋 Помощь" -> "help";
             case "🔄 Обновить статус", "🏠 Обновить статус" -> "status:refresh";
             case "🥛 Принять молоко", "🥛 Оформить приёмку", "🥛 Новая приёмка" -> "receipt:new";
             case "🧾 Мои записи" -> "view:my_receipts";
@@ -1988,6 +2064,34 @@ public class BotService {
         }
         data.remove("button_actions");
         repository.saveSession(maxUserId, session.state(), data);
+    }
+
+    private void appendPageButtons(List<ObjectNode> buttons, int page, int totalItems, int pageSize, String payloadPrefix) {
+        int totalPages = Math.max(1, (int) Math.ceil((double) totalItems / pageSize));
+        if (page > 0) {
+            buttons.add(Keyboards.callback("⬅️ Назад", payloadPrefix + (page - 1)));
+        }
+        if (page + 1 < totalPages) {
+            buttons.add(Keyboards.callback("➡️ Далее", payloadPrefix + (page + 1)));
+        }
+    }
+
+    private boolean isDraftEditField(ObjectNode data, String field) {
+        return field.equals(data.path("draft_edit_field").asText(""));
+    }
+
+    private void finishDraftEdit(BotUser user, ObjectNode data) {
+        data.remove("draft_edit_field");
+        repository.saveSession(user.maxUserId(), "RECEIPT_CONFIRM", data);
+        sendReceiptConfirmation(user, data);
+    }
+
+    private int parseIntSafe(String raw, int fallback) {
+        try {
+            return Integer.parseInt(raw);
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
     private long firstNonZero(long... values) {
