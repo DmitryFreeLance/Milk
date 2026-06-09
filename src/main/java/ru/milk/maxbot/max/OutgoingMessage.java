@@ -11,4 +11,8 @@ public record OutgoingMessage(
     public static OutgoingMessage markdown(String text, ArrayNode attachments) {
         return new OutgoingMessage(text, attachments, true, "markdown");
     }
+
+    public static OutgoingMessage plain(String text, ArrayNode attachments) {
+        return new OutgoingMessage(text, attachments, true, null);
+    }
 }
