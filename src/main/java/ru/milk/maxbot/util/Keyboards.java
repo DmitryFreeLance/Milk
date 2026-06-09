@@ -52,9 +52,9 @@ public final class Keyboards {
 
     public static ObjectNode callback(String text, String payload) {
         ObjectNode button = Jsons.object();
-        button.put("type", "callback");
+        button.put("type", "message");
         button.put("text", text);
-        button.put("payload", payload);
+        button.put("_bot_payload", payload);
         return button;
     }
 
@@ -69,7 +69,7 @@ public final class Keyboards {
         ObjectNode button = Jsons.object();
         button.put("type", "message");
         button.put("text", text);
-        button.put("payload", payload);
+        button.put("_bot_payload", payload);
         return button;
     }
 
@@ -85,8 +85,22 @@ public final class Keyboards {
     private static ArrayNode buildRow(List<ObjectNode> buttons) {
         ArrayNode row = Jsons.array();
         for (ObjectNode button : buttons) {
-            row.add(button);
+            row.add(toTransportButton(button));
         }
         return row;
+    }
+
+    private static ObjectNode toTransportButton(ObjectNode source) {
+        ObjectNode button = Jsons.object();
+        String type = source.path("type").asText("");
+        String text = source.path("text").asText("");
+
+        if (!type.isBlank()) {
+            button.put("type", type);
+        }
+        if (!text.isBlank()) {
+            button.put("text", text);
+        }
+        return button;
     }
 }

@@ -270,6 +270,11 @@ public class BotService {
         JsonNode attachments = message.path("body").path("attachments");
 
         try {
+            String buttonAction = resolveButtonAction(user, text);
+            if (buttonAction != null) {
+                dispatchCallback(user, buttonAction);
+                return;
+            }
             if (handleGlobalCommand(user, text)) {
                 return;
             }
@@ -666,18 +671,20 @@ public class BotService {
                 Numbers.oneDecimal(creditWeight),
                 data.path("photo_status").asText("MISSING")
         );
+        List<ObjectNode> buttons = listOf(
+                Keyboards.callback("✅ Сохранить запись", "receipt:confirm"),
+                Keyboards.callback("🌾 Изменить колхоз", "receipt:edit:farm"),
+                Keyboards.callback("🚚 Изменить секцию", "receipt:edit:section"),
+                Keyboards.callback("⚖️ Изменить вес", "receipt:edit:weight"),
+                Keyboards.callback("🧪 Изменить жир", "receipt:edit:fat"),
+                Keyboards.callback("🧬 Изменить белок", "receipt:edit:protein"),
+                Keyboards.callback("📷 Заменить фото", "receipt:edit:photo"),
+                Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")
+        );
+        rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), text, Attachments.imageWithKeyboard(
                 textOrNull(data, "photo_payload_json"),
-                Keyboards.inline(listOf(
-                        Keyboards.callback("✅ Сохранить запись", "receipt:confirm"),
-                        Keyboards.callback("🌾 Изменить колхоз", "receipt:edit:farm"),
-                        Keyboards.callback("🚚 Изменить секцию", "receipt:edit:section"),
-                        Keyboards.callback("⚖️ Изменить вес", "receipt:edit:weight"),
-                        Keyboards.callback("🧪 Изменить жир", "receipt:edit:fat"),
-                        Keyboards.callback("🧬 Изменить белок", "receipt:edit:protein"),
-                        Keyboards.callback("📷 Заменить фото", "receipt:edit:photo"),
-                        Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")
-                ))
+                Keyboards.inline(buttons)
         ));
     }
 
@@ -796,6 +803,7 @@ public class BotService {
             buttons.add(Keyboards.callback("🗑️ Удалить запись", "admin:record:delete:" + receipt.id()));
         }
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
+        rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), Texts.receiptDetails(receipt, zoneId), Attachments.imageWithKeyboard(receipt.photoPayloadJson(), Keyboards.inline(buttons)));
     }
 
@@ -1467,13 +1475,13 @@ public class BotService {
     private void sendExcelReport(BotUser user, long farmId, LocalDate start, LocalDate end) {
         Path file = reportService.buildExcelFarmReport(farmId, start, end);
         JsonNode uploadPayload = maxApiClient.uploadLocalFile(file, "file");
+        List<ObjectNode> buttons = listOf(Keyboards.callback("🏠 Главное меню", "nav:home"));
+        rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), """
                 📈 *Excel-отчёт готов*
 
                 Внутри файл с таблицей и простыми графиками по среднему весу, жиру и белку за выбранный период.
-                """, Attachments.fileWithKeyboard(uploadPayload, Keyboards.inline(listOf(
-                Keyboards.callback("🏠 Главное меню", "nav:home")
-        ))));
+                """, Attachments.fileWithKeyboard(uploadPayload, Keyboards.inline(buttons)));
     }
 
     private void toggleDigest(BotUser user) {
@@ -1654,6 +1662,9 @@ public class BotService {
     }
 
     private void sendToUser(long maxUserId, String text, ArrayNode attachments) {
+        if (attachments == null) {
+            clearButtonActions(maxUserId);
+        }
         OutgoingMessage message = containsInlineKeyboard(attachments)
                 ? OutgoingMessage.plain(stripMarkdown(text), attachments)
                 : OutgoingMessage.markdown(text, attachments);
@@ -1661,6 +1672,7 @@ public class BotService {
     }
 
     private void sendToUser(long maxUserId, String text, List<ObjectNode> buttons) {
+        rememberButtonActions(maxUserId, buttons);
         sendToUser(maxUserId, text, Keyboards.inline(buttons));
     }
 
@@ -1901,6 +1913,81 @@ public class BotService {
         }
         String directPayload = update.path("payload").asText(null);
         return directPayload == null || directPayload.isBlank() ? null : directPayload;
+    }
+
+    private String resolveButtonAction(BotUser user, String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+
+        ConversationSession session = repository.getSession(user.maxUserId());
+        JsonNode mappedActions = session.data().path("button_actions");
+        if (mappedActions.isObject()) {
+            String mapped = mappedActions.path(text).asText(null);
+            if (mapped != null && !mapped.isBlank()) {
+                return mapped;
+            }
+        }
+
+        return switch (text) {
+            case "🚀 Начать" -> "start";
+            case "📝 Подать заявку", "📝 Изменить заявку" -> "reg:apply";
+            case "🙋 Помощь" -> "help";
+            case "🔄 Обновить статус", "🏠 Обновить статус" -> "status:refresh";
+            case "🥛 Принять молоко", "🥛 Оформить приёмку", "🥛 Новая приёмка" -> "receipt:new";
+            case "🧾 Мои записи" -> "view:my_receipts";
+            case "📚 Справочник колхозов" -> "directory:farms";
+            case "🔎 Колхоз за день" -> "report:farmday:start";
+            case "🏭 Сводка по пункту" -> "report:point:start";
+            case "🌍 Сводка по всем пунктам" -> "report:global:start";
+            case "📈 Excel и графики" -> "report:excel:start";
+            case "📬 Вкл/выкл сводку смены" -> "digest:toggle";
+            case "👥 Заявки на доступ" -> "admin:requests";
+            case "🧑‍💼 Пользователи" -> "admin:users";
+            case "🌾 Колхозы" -> "admin:farms";
+            case "✏️ Записи" -> "admin:records";
+            case "➡️ Продолжить без комментария" -> "reg:skip-comment";
+            case "✅ Отправить без номера" -> "reg:skip-contact";
+            case "⚠️ Сохранить без фото" -> "receipt:skip-photo";
+            case "🏠 Главное меню", "🏠 В меню", "🏠 Назад в панель", "🏠 В панель" -> "nav:home";
+            case "🏠 Отменить и выйти" -> "nav:cancel";
+            default -> null;
+        };
+    }
+
+    private void rememberButtonActions(long maxUserId, List<ObjectNode> buttons) {
+        ConversationSession session = repository.getSession(maxUserId);
+        ObjectNode data = editableData(session);
+        data.remove("button_actions");
+
+        if (buttons != null && !buttons.isEmpty()) {
+            ObjectNode actions = Jsons.object();
+            for (ObjectNode button : buttons) {
+                String text = button.path("text").asText("");
+                String payload = firstNonBlank(
+                        button.path("_bot_payload").asText(null),
+                        button.path("payload").asText(null)
+                );
+                if (!text.isBlank() && payload != null && !payload.isBlank()) {
+                    actions.put(text, payload);
+                }
+            }
+            if (!actions.isEmpty()) {
+                data.set("button_actions", actions);
+            }
+        }
+
+        repository.saveSession(maxUserId, session.state(), data);
+    }
+
+    private void clearButtonActions(long maxUserId) {
+        ConversationSession session = repository.getSession(maxUserId);
+        ObjectNode data = editableData(session);
+        if (!data.has("button_actions")) {
+            return;
+        }
+        data.remove("button_actions");
+        repository.saveSession(maxUserId, session.state(), data);
     }
 
     private long firstNonZero(long... values) {
