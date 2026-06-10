@@ -1983,6 +1983,7 @@ public class BotService {
             case "👥 Заявки на доступ" -> "admin:requests";
             case "🧑‍💼 Пользователи" -> "admin:users";
             case "🌾 Колхозы" -> "admin:farms";
+            case "➕ Добавить приёмку" -> "admin:receipt:new";
             case "✏️ Записи" -> "admin:records";
             case "⚠️ Сохранить без фото" -> "receipt:skip-photo";
             case "🏠 Главное меню", "🏠 В меню", "🏠 Назад в панель", "🏠 В панель" -> "nav:home";
