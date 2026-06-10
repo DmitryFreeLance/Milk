@@ -46,8 +46,7 @@ public class ReportService {
                     .append(" — ")
                     .append(Numbers.oneDecimal(receipt.weightKg())).append(" кг, жир ")
                     .append(Numbers.twoDecimals(receipt.fatPercent())).append("%, белок ")
-                    .append(Numbers.twoDecimals(receipt.proteinPercent())).append("%, зачёт ")
-                    .append(Numbers.oneDecimal(receipt.creditWeightKg())).append(" кг\n");
+                    .append(Numbers.twoDecimals(receipt.proteinPercent())).append("%\n");
         }
         return text.toString();
     }
@@ -87,8 +86,7 @@ public class ReportService {
         points.stream()
                 .filter(point -> point.summary().recordsCount() > 0)
                 .forEach(point -> text.append("• ").append(point.name()).append(" — ")
-                        .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг, зачёт ")
-                        .append(Numbers.oneDecimal(point.summary().totalCreditWeightKg())).append(" кг\n"));
+                        .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг\n"));
         return text.toString();
     }
 
@@ -108,10 +106,9 @@ public class ReportService {
                 summaryBlock(total),
                 points.stream()
                         .filter(point -> point.summary().recordsCount() > 0)
-                        .map(point -> "• %s — %s кг, зачёт %s кг".formatted(
+                        .map(point -> "• %s — %s кг".formatted(
                                 point.name(),
-                                Numbers.oneDecimal(point.summary().totalWeightKg()),
-                                Numbers.oneDecimal(point.summary().totalCreditWeightKg())))
+                                Numbers.oneDecimal(point.summary().totalWeightKg())))
                         .collect(Collectors.joining("\n"))
         );
     }
@@ -126,13 +123,11 @@ public class ReportService {
         return """
                 Записей: *%d*
                 Фактический вес: *%s кг*
-                Зачётный вес: *%s кг*
                 Средний жир: *%s%%*
                 Средний белок: *%s%%*
                 """.formatted(
                 summary.recordsCount(),
                 Numbers.oneDecimal(summary.totalWeightKg()),
-                Numbers.oneDecimal(summary.totalCreditWeightKg()),
                 Numbers.twoDecimals(summary.weightedFatPercent()),
                 Numbers.twoDecimals(summary.weightedProteinPercent())
         );

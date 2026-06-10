@@ -17,7 +17,6 @@ import ru.milk.maxbot.max.MaxApiClient;
 import ru.milk.maxbot.max.OutgoingMessage;
 import ru.milk.maxbot.repository.BotRepository;
 import ru.milk.maxbot.util.Attachments;
-import ru.milk.maxbot.util.CreditWeightCalculator;
 import ru.milk.maxbot.util.Dates;
 import ru.milk.maxbot.util.Jsons;
 import ru.milk.maxbot.util.Keyboards;
@@ -138,6 +137,7 @@ public class BotService {
             case "help" -> sendHelp(user);
             case "status:refresh" -> sendEntryPoint(user);
             case "reg:apply" -> startRegistration(user);
+            case "admin:receipt:new" -> startAdminReceiptFlow(user);
             case "receipt:new" -> startReceiptFlow(user);
             case "receipt:skip-photo" -> {
                 ConversationSession session = repository.getSession(user.maxUserId());
@@ -165,16 +165,12 @@ public class BotService {
     }
 
     private void handlePatternCallback(BotUser user, String payload) {
-        if (payload.startsWith("reg:role:")) {
-            onRegistrationRoleChosen(user, payload.substring("reg:role:".length()));
-            return;
-        }
-        if (payload.startsWith("reg:point:")) {
-            onRegistrationPointChosen(user, payload.substring("reg:point:".length()));
-            return;
-        }
         if (payload.startsWith("receipt:farm:")) {
             onReceiptFarmChosen(user, payload.substring("receipt:farm:".length()));
+            return;
+        }
+        if (payload.startsWith("receipt:point:id:")) {
+            onReceiptPointChosen(user, payload.substring("receipt:point:id:".length()));
             return;
         }
         if (payload.startsWith("receipt:edit:")) {
@@ -364,49 +360,22 @@ public class BotService {
                 • Один и тот же поставщик в двух секциях заносится двумя записями, а в общей аналитике показатели суммируются автоматически.
                 • Если вы сотрудник, свою запись можно исправить в течение 1 часа.
                 • Администратор может открыть запись повторно, поправить её или убрать из базы.
-                • Директора и гендиректор видят отчёты, зачётный вес, детали по колхозам и Excel-графики.
+                • Директора и гендиректор видят отчёты, детали по колхозам и Excel-графики.
                 • Для тестирования ролей доверенный пользователь из `BOOTSTRAP_ADMIN_USER_IDS` может использовать команды `/admin`, `/director`, `/gendirector`, `/employee`, `/user`, `/pending`, `/chepas`, `/arat`, `/pilna`, `/role`.
                 """, homeButtons(user));
     }
 
     private void startRegistration(BotUser user) {
         clearSession(user);
-        repository.saveSession(user.maxUserId(), "REG_ROLE", Jsons.object());
+        repository.saveSession(user.maxUserId(), "REG_CONTACT", Jsons.object());
         sendToUser(user.maxUserId(), """
                 📝 *Заявка на доступ*
 
-                Сначала выберите, какую роль вы запрашиваете. Администратор позже сможет подтвердить её или изменить.
+                Для отправки заявки нужен контактный номер. После этого администратор сам назначит роль и, если нужно, пункт приёмки.
                 """, listOf(
-                Keyboards.callback("👨‍🔧 Сотрудник", "reg:role:EMPLOYEE"),
-                Keyboards.callback("👔 Директор", "reg:role:DIRECTOR"),
-                Keyboards.callback("🏢 Генеральный директор", "reg:role:GENERAL_DIRECTOR"),
+                Keyboards.contact("📲 Поделиться контактом"),
                 Keyboards.callback("🏠 В меню", "nav:home")
         ));
-    }
-
-    private void onRegistrationRoleChosen(BotUser user, String role) {
-        ObjectNode data = Jsons.object();
-        data.put("requested_role", role);
-        if ("EMPLOYEE".equals(role)) {
-            repository.saveSession(user.maxUserId(), "REG_POINT", data);
-            List<ObjectNode> buttons = new ArrayList<>();
-            for (ReceivingPoint point : repository.listPoints()) {
-                buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "reg:point:" + point.id()));
-            }
-            buttons.add(Keyboards.callback("🏠 В меню", "nav:home"));
-            sendToUser(user.maxUserId(), "Выберите пункт приёмки.", buttons);
-        } else {
-            repository.saveSession(user.maxUserId(), "REG_CONTACT", data);
-            askForContact(user);
-        }
-    }
-
-    private void onRegistrationPointChosen(BotUser user, String pointIdRaw) {
-        long pointId = parseLong(pointIdRaw);
-        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
-        data.put("requested_point_id", pointId);
-        repository.saveSession(user.maxUserId(), "REG_CONTACT", data);
-        askForContact(user);
     }
 
     private void askForContact(BotUser user) {
@@ -443,11 +412,7 @@ public class BotService {
     }
 
     private void finalizeRegistration(BotUser user) {
-        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
-        String role = data.path("requested_role").asText("EMPLOYEE");
-        Long pointId = data.has("requested_point_id") ? data.get("requested_point_id").asLong() : null;
-        String comment = data.path("comment").asText(null);
-        PendingRegistration request = repository.createOrUpdateRegistration(user.id(), role, pointId, comment);
+        PendingRegistration request = repository.createOrUpdateRegistration(user.id(), null, null, null);
         notifyAdminsAboutRegistration(request);
         clearSession(user);
         sendToUser(user.maxUserId(), Texts.registrationCreated(), pendingButtons());
@@ -475,8 +440,39 @@ public class BotService {
         ObjectNode data = Jsons.object();
         data.put("point_id", user.receivingPointId());
         data.put("delivery_date", LocalDate.now(zoneId).toString());
-        repository.saveSession(user.maxUserId(), "RECEIPT_FARM", data);
+        openReceiptFarmSelection(user, data);
+    }
 
+    private void startAdminReceiptFlow(BotUser admin) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        clearSession(admin);
+        ObjectNode data = Jsons.object();
+        data.put("delivery_date", LocalDate.now(zoneId).toString());
+        repository.saveSession(admin.maxUserId(), "RECEIPT_POINT_SELECT", data);
+
+        List<ObjectNode> buttons = new ArrayList<>();
+        for (ReceivingPoint point : repository.listPoints()) {
+            buttons.add(Keyboards.callback("📍 Пункт: " + point.name(), "receipt:point:id:" + point.id()));
+        }
+        buttons.add(Keyboards.callback("🏠 В меню", "nav:cancel"));
+        sendToUser(admin.maxUserId(), "Выберите пункт приёмки.", buttons);
+    }
+
+    private void onReceiptPointChosen(BotUser user, String pointIdRaw) {
+        long pointId = parseLong(pointIdRaw);
+        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
+        data.put("point_id", pointId);
+        if (!data.has("delivery_date")) {
+            data.put("delivery_date", LocalDate.now(zoneId).toString());
+        }
+        openReceiptFarmSelection(user, data);
+    }
+
+    private void openReceiptFarmSelection(BotUser user, ObjectNode data) {
+        repository.saveSession(user.maxUserId(), "RECEIPT_FARM", data);
         List<ObjectNode> buttons = new ArrayList<>();
         for (Farm farm : repository.listFarms(true)) {
             buttons.add(Keyboards.callback("🌾 " + farm.name(), "receipt:farm:" + farm.id()));
@@ -643,8 +639,7 @@ public class BotService {
         double weight = data.path("weight_kg").asDouble();
         double fat = data.path("fat_percent").asDouble();
         double protein = data.path("protein_percent").asDouble();
-        double creditWeight = CreditWeightCalculator.calculate(weight, fat, protein, config.baseFatPercent(), config.baseProteinPercent());
-        data.put("credit_weight_kg", creditWeight);
+        data.put("credit_weight_kg", weight);
         repository.saveSession(user.maxUserId(), "RECEIPT_CONFIRM", data);
 
         String text = """
@@ -656,7 +651,6 @@ public class BotService {
                 Вес: *%s кг*
                 Жир: *%s%%*
                 Белок: *%s%%*
-                Зачётный вес: *%s кг*
                 Фото: *%s*
 
                 Если всё верно, сохраните запись. Если нет — быстро поправим нужный пункт.
@@ -667,7 +661,6 @@ public class BotService {
                 Numbers.oneDecimal(weight),
                 Numbers.twoDecimals(fat),
                 Numbers.twoDecimals(protein),
-                Numbers.oneDecimal(creditWeight),
                 data.path("photo_status").asText("MISSING")
         );
         List<ObjectNode> buttons = listOf(
@@ -909,7 +902,6 @@ public class BotService {
             }
         }
 
-        double creditWeight = CreditWeightCalculator.calculate(weight, fat, protein, config.baseFatPercent(), config.baseProteinPercent());
         repository.updateReceipt(
                 receipt.id(),
                 user.id(),
@@ -918,7 +910,7 @@ public class BotService {
                 weight,
                 fat,
                 protein,
-                creditWeight,
+                weight,
                 receipt.photoToken(),
                 receipt.photoPayloadJson(),
                 receipt.photoWidth(),
@@ -957,7 +949,7 @@ public class BotService {
                 receipt.weightKg(),
                 receipt.fatPercent(),
                 receipt.proteinPercent(),
-                receipt.creditWeightKg(),
+                receipt.weightKg(),
                 photo.get().token(),
                 photo.get().payloadJson(),
                 photo.get().width(),
@@ -983,7 +975,7 @@ public class BotService {
         }
         List<ObjectNode> buttons = new ArrayList<>();
         for (PendingRegistration request : requests) {
-            buttons.add(Keyboards.callback("🆕 " + request.displayName() + " • " + request.requestedRole(), "admin:req:view:" + request.id()));
+            buttons.add(Keyboards.callback("🆕 " + request.displayName(), "admin:req:view:" + request.id()));
         }
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(user.maxUserId(), "👥 *Заявки на доступ*\n\nВыберите заявку, чтобы назначить роль и подтвердить доступ.", buttons);
@@ -1093,6 +1085,9 @@ public class BotService {
         }
         BotUser target = repository.listUsers().stream().filter(it -> it.id() == userId).findFirst().orElseThrow();
         String pointName = target.receivingPointId() == null ? "не назначен" : repository.findPoint(target.receivingPointId()).map(ReceivingPoint::name).orElse("не найден");
+        String firstName = target.firstName() == null || target.firstName().isBlank() ? "не указано" : target.firstName();
+        String lastName = target.lastName() == null || target.lastName().isBlank() ? "не указана" : target.lastName();
+        String phone = target.phone() == null || target.phone().isBlank() ? "не указан" : target.phone();
         List<ObjectNode> buttons = new ArrayList<>();
         buttons.add(Keyboards.callback("👨‍🔧 Сделать сотрудником", "admin:user:role:" + target.id() + ":EMPLOYEE"));
         buttons.add(Keyboards.callback("👔 Сделать директором", "admin:user:role:" + target.id() + ":DIRECTOR"));
@@ -1109,12 +1104,16 @@ public class BotService {
                 👤 *Карточка пользователя*
 
                 Имя: *%s*
+                Фамилия: *%s*
+                Телефон: *%s*
                 Роль: *%s*
                 Пункт: *%s*
                 Активность: *%s*
                 Получает сводку: *%s*
                 """.formatted(
-                target.displayName(),
+                firstName,
+                lastName,
+                phone,
                 target.role(),
                 pointName,
                 target.active() ? "активен" : "отключён",
@@ -1492,8 +1491,8 @@ public class BotService {
     private void sendReportBySession(BotUser user, ObjectNode data, LocalDate start, LocalDate end) {
         String mode = data.path("report_mode").asText();
         switch (mode) {
-            case "POINT" -> sendToUser(user.maxUserId(), reportService.buildPointPeriodReport(data.path("point_id").asLong(), start, end), directorButtons());
-            case "GLOBAL" -> sendToUser(user.maxUserId(), reportService.buildGlobalPeriodReport(start, end), directorButtons());
+            case "POINT" -> sendToUser(user.maxUserId(), reportService.buildPointPeriodReport(data.path("point_id").asLong(), start, end), reportResultButtons());
+            case "GLOBAL" -> sendToUser(user.maxUserId(), reportService.buildGlobalPeriodReport(start, end), reportResultButtons());
             case "EXCEL" -> sendExcelReport(user, data.path("farm_id").asLong(), start, end);
             default -> sendToUser(user.maxUserId(), "Не удалось определить тип отчёта. Возвращаю в меню.", homeButtons(user));
         }
@@ -1501,7 +1500,7 @@ public class BotService {
 
     private void sendFarmDayReport(BotUser user, long farmId, LocalDate date) {
         List<MilkReceipt> receipts = repository.listReceipts(date, date, null, farmId, false);
-        sendToUser(user.maxUserId(), reportService.buildFarmDayReport(farmId, date), directorButtons());
+        sendToUser(user.maxUserId(), reportService.buildFarmDayReport(farmId, date), reportResultButtons());
         for (MilkReceipt receipt : receipts) {
             if (receipt.photoPayloadJson() != null && !receipt.photoPayloadJson().isBlank()) {
                 sendToUser(user.maxUserId(), """
@@ -1687,6 +1686,7 @@ public class BotService {
                 Keyboards.callback("👥 Заявки на доступ", "admin:requests"),
                 Keyboards.callback("🧑‍💼 Пользователи", "admin:users"),
                 Keyboards.callback("🌾 Колхозы", "admin:farms"),
+                Keyboards.callback("➕ Добавить приёмку", "admin:receipt:new"),
                 Keyboards.callback("✏️ Записи", "admin:records"),
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
@@ -1709,6 +1709,10 @@ public class BotService {
     private void sendToUser(long maxUserId, String text, List<ObjectNode> buttons) {
         rememberButtonActions(maxUserId, buttons);
         sendToUser(maxUserId, text, Keyboards.inline(buttons));
+    }
+
+    private List<ObjectNode> reportResultButtons() {
+        return listOf(Keyboards.callback("🏠 Главное меню", "nav:home"));
     }
 
     private ObjectNode editableData(ConversationSession session) {

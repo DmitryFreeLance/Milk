@@ -19,7 +19,7 @@ public final class Texts {
                 • Большая Арать
                 • Пильна
 
-                Здесь можно оформить поставку по секциям, сохранить фото накладной, посчитать зачётный вес и получить управленческую сводку без ручных таблиц.
+                Здесь можно оформить поставку по секциям, сохранить фото накладной и получить управленческую сводку без ручных таблиц.
 
                 Нажмите кнопку ниже, чтобы начать работу, или отправьте заявку на доступ.
                 """;
@@ -31,7 +31,7 @@ public final class Texts {
 
                 %s, ваш доступ ещё не подтверждён администратором. Как только роль будет назначена, бот сразу откроет рабочее меню.
 
-                Пока можно открыть справку или обновить статус заявки.
+                Пока можно обновить статус заявки или отправить её заново.
                 """.formatted(user.displayName());
     }
 
@@ -52,7 +52,7 @@ public final class Texts {
 
                 Ваша роль: *%s*
 
-                Здесь доступны детальные записи по колхозам, сводка по пунктам, общие отчёты за период, зачётный вес и выгрузка графиков в Excel.
+                Здесь доступны детальные записи по колхозам, сводка по пунктам, общие отчёты за период и выгрузка графиков в Excel.
                 """.formatted(user.displayName(), roleLabel);
     }
 
@@ -84,7 +84,6 @@ public final class Texts {
                 Вес: *%s кг*
                 Жир: *%s%%*
                 Белок: *%s%%*
-                Зачётный вес: *%s кг*
 
                 Запись доступна для редактирования в течение 1 часа. Если потребуется исправление позже, администратор сможет открыть её повторно.
                 """.formatted(
@@ -95,13 +94,11 @@ public final class Texts {
                 receipt.sectionLabel(),
                 Numbers.oneDecimal(receipt.weightKg()),
                 Numbers.twoDecimals(receipt.fatPercent()),
-                Numbers.twoDecimals(receipt.proteinPercent()),
-                Numbers.oneDecimal(receipt.creditWeightKg())
+                Numbers.twoDecimals(receipt.proteinPercent())
         );
     }
 
     public static String adminRegistrationCard(PendingRegistration request) {
-        String point = request.requestedPointName() == null ? "не выбран" : request.requestedPointName();
         String phone = request.phone() == null || request.phone().isBlank() ? "не указан" : request.phone();
         return """
                 🆕 *Новая заявка на доступ*
@@ -109,14 +106,10 @@ public final class Texts {
                 Сотрудник: *%s*
                 MAX ID: `%s`
                 Телефон: *%s*
-                Желаемая роль: *%s*
-                Желаемый пункт: *%s*
                 """.formatted(
                 request.displayName(),
                 request.maxUserId(),
-                phone,
-                request.requestedRole(),
-                point
+                phone
         );
     }
 
@@ -132,7 +125,6 @@ public final class Texts {
                 Вес: *%s кг*
                 Жир: *%s%%*
                 Белок: *%s%%*
-                Зачётный вес: *%s кг*
                 Статус фото: *%s*
                 Создано: *%s*
                 Редактирование до: *%s*
@@ -146,7 +138,6 @@ public final class Texts {
                 Numbers.oneDecimal(receipt.weightKg()),
                 Numbers.twoDecimals(receipt.fatPercent()),
                 Numbers.twoDecimals(receipt.proteinPercent()),
-                Numbers.oneDecimal(receipt.creditWeightKg()),
                 receipt.photoStatus(),
                 Dates.formatDateTime(receipt.createdAt(), zoneId),
                 Dates.formatDateTime(receipt.editableUntil(), zoneId)
