@@ -37,12 +37,10 @@ public class ReportService {
             return text.toString();
         }
 
-        text.append("Секции и записи:\n");
+        text.append("Записи:\n");
         for (MilkReceipt receipt : receipts) {
             text.append("• ")
                     .append(receipt.pointName())
-                    .append(", секция ")
-                    .append(receipt.sectionLabel())
                     .append(" — ")
                     .append(Numbers.oneDecimal(receipt.weightKg())).append(" кг, жир ")
                     .append(Numbers.twoDecimals(receipt.fatPercent())).append("%, белок ")

@@ -44,7 +44,6 @@ public class ExcelReportService {
                 List<MilkReceipt> orderedReceipts = receipts.stream()
                         .sorted(Comparator.comparing(MilkReceipt::deliveryDate)
                                 .thenComparing(MilkReceipt::pointName)
-                                .thenComparing(MilkReceipt::sectionLabel)
                                 .thenComparing(MilkReceipt::createdAt))
                         .toList();
                 List<DailyAggregate> rows = aggregateByDay(orderedReceipts);
@@ -65,29 +64,27 @@ public class ExcelReportService {
         Row header = sheet.createRow(0);
         header.createCell(0).setCellValue("Дата");
         header.createCell(1).setCellValue("Пункт");
-        header.createCell(2).setCellValue("Секция");
-        header.createCell(3).setCellValue("Вес, кг");
-        header.createCell(4).setCellValue("Жир, %");
-        header.createCell(5).setCellValue("Белок, %");
-        header.createCell(6).setCellValue("Принял");
-        header.createCell(7).setCellValue("Статус фото");
-        header.createCell(8).setCellValue("Номер записи");
+        header.createCell(2).setCellValue("Вес, кг");
+        header.createCell(3).setCellValue("Жир, %");
+        header.createCell(4).setCellValue("Белок, %");
+        header.createCell(5).setCellValue("Принял");
+        header.createCell(6).setCellValue("Статус фото");
+        header.createCell(7).setCellValue("Номер записи");
 
         int rowIndex = 1;
         for (MilkReceipt receipt : receipts) {
             Row row = sheet.createRow(rowIndex++);
             row.createCell(0).setCellValue(Dates.formatDate(receipt.deliveryDate()));
             row.createCell(1).setCellValue(receipt.pointName());
-            row.createCell(2).setCellValue(receipt.sectionLabel());
-            row.createCell(3).setCellValue(receipt.weightKg());
-            row.createCell(4).setCellValue(receipt.fatPercent());
-            row.createCell(5).setCellValue(receipt.proteinPercent());
-            row.createCell(6).setCellValue(receipt.createdByName());
-            row.createCell(7).setCellValue(receipt.photoStatus());
-            row.createCell(8).setCellValue(receipt.publicId());
+            row.createCell(2).setCellValue(receipt.weightKg());
+            row.createCell(3).setCellValue(receipt.fatPercent());
+            row.createCell(4).setCellValue(receipt.proteinPercent());
+            row.createCell(5).setCellValue(receipt.createdByName());
+            row.createCell(6).setCellValue(receipt.photoStatus());
+            row.createCell(7).setCellValue(receipt.publicId());
         }
 
-        autoSize(sheet, 9);
+        autoSize(sheet, 8);
     }
 
     private List<DailyAggregate> aggregateByDay(List<MilkReceipt> receipts) {

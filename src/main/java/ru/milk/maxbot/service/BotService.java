@@ -286,7 +286,7 @@ public class BotService {
             }
             switch (session.state()) {
                 case "REG_CONTACT" -> onRegistrationContact(user, attachments);
-                case "RECEIPT_SECTION" -> onReceiptSection(user, text);
+                case "RECEIPT_SECTION" -> onLegacyReceiptSectionInput(user, text);
                 case "RECEIPT_WEIGHT" -> onReceiptWeight(user, text);
                 case "RECEIPT_FAT" -> onReceiptFat(user, text);
                 case "RECEIPT_PROTEIN" -> onReceiptProtein(user, text);
@@ -356,8 +356,8 @@ public class BotService {
                 🙋 *Как работать с ботом*
 
                 • Все кнопки под сообщениями встроенные. Короткие кнопки могут идти по две в ряд, длинные — по одной, чтобы на телефоне всё читалось аккуратно.
-                • Приёмка проходит пошагово: колхоз → секция → вес → жир → белок → фото → подтверждение.
-                • Один и тот же поставщик в двух секциях заносится двумя записями, а в общей аналитике показатели суммируются автоматически.
+                • Приёмка проходит пошагово: колхоз → вес → жир → белок → фото → подтверждение.
+                • Если один и тот же поставщик приехал в двух секциях, просто оформите две отдельные записи.
                 • Если вы сотрудник, свою запись можно исправить в течение 1 часа.
                 • Администратор может открыть запись повторно, поправить её или убрать из базы.
                 • Директора и гендиректор видят отчёты, детали по колхозам и Excel-графики.
@@ -481,7 +481,7 @@ public class BotService {
         sendToUser(user.maxUserId(), """
                 🥛 *Новая приёмка молока*
 
-                Шаг 1 из 6. Выберите колхоз-поставщик. Если один и тот же поставщик приехал в двух секциях, потом просто сделайте вторую запись — аналитика всё суммирует автоматически.
+                Шаг 1 из 5. Выберите колхоз-поставщик. Если один и тот же поставщик приехал в двух секциях, просто оформите две отдельные записи.
                 """, buttons);
     }
 
@@ -489,43 +489,25 @@ public class BotService {
         long farmId = parseLong(farmIdRaw);
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("farm_id", farmId);
+        data.put("section_label", "Без секции");
         if (isDraftEditField(data, "farm")) {
-            finishDraftEdit(user, data);
-            return;
-        }
-        repository.saveSession(user.maxUserId(), "RECEIPT_SECTION", data);
-        sendToUser(user.maxUserId(), """
-                🚚 *Шаг 2 из 6*
-
-                Напишите номер или обозначение секции. Примеры:
-                `1`
-                `2`
-                `Секция А`
-                """, listOf(
-                Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")
-        ));
-    }
-
-    private void onReceiptSection(BotUser user, String text) {
-        if (text.isBlank()) {
-            sendToUser(user.maxUserId(), "Нужно указать секцию текстом, чтобы запись потом можно было открыть по секциям.", listOf(
-                    Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")
-            ));
-            return;
-        }
-        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
-        data.put("section_label", text.trim());
-        if (isDraftEditField(data, "section")) {
             finishDraftEdit(user, data);
             return;
         }
         repository.saveSession(user.maxUserId(), "RECEIPT_WEIGHT", data);
         sendToUser(user.maxUserId(), """
-                ⚖️ *Шаг 3 из 6*
+                ⚖️ *Шаг 2 из 5*
 
                 Введите вес в килограммах. Можно использовать точку или запятую.
                 Пример: `12450.0`
                 """, listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
+    }
+
+    private void onLegacyReceiptSectionInput(BotUser user, String text) {
+        ObjectNode data = editableData(repository.getSession(user.maxUserId()));
+        data.put("section_label", "Без секции");
+        repository.saveSession(user.maxUserId(), "RECEIPT_WEIGHT", data);
+        onReceiptWeight(user, text);
     }
 
     private void onReceiptWeight(BotUser user, String text) {
@@ -538,13 +520,14 @@ public class BotService {
         }
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("weight_kg", value);
-        if (isDraftEditField(data, "weight")) {
+        if (isDraftEditField(data, "weight") || isDraftEditField(data, "section")) {
+            data.remove("draft_edit_field");
             finishDraftEdit(user, data);
             return;
         }
         repository.saveSession(user.maxUserId(), "RECEIPT_FAT", data);
         sendToUser(user.maxUserId(), """
-                🧪 *Шаг 4 из 6*
+                🧪 *Шаг 3 из 5*
 
                 Введите показатель жира в процентах.
                 Пример: `3.62`
@@ -567,7 +550,7 @@ public class BotService {
         }
         repository.saveSession(user.maxUserId(), "RECEIPT_PROTEIN", data);
         sendToUser(user.maxUserId(), """
-                🧬 *Шаг 5 из 6*
+                🧬 *Шаг 4 из 5*
 
                 Введите показатель белка в процентах.
                 Пример: `3.08`
@@ -590,7 +573,7 @@ public class BotService {
         }
         repository.saveSession(user.maxUserId(), "RECEIPT_PHOTO", data);
         sendToUser(user.maxUserId(), """
-                📷 *Шаг 6 из 6*
+                📷 *Шаг 5 из 5*
 
                 Прикрепите фотографию накладной. Я постараюсь проверить размер и ориентацию, а затем покажу превью перед сохранением.
 
@@ -647,7 +630,6 @@ public class BotService {
 
                 Колхоз: *%s*
                 Пункт: *%s*
-                Секция: *%s*
                 Вес: *%s кг*
                 Жир: *%s%%*
                 Белок: *%s%%*
@@ -657,7 +639,6 @@ public class BotService {
                 """.formatted(
                 farm.name(),
                 point.name(),
-                data.path("section_label").asText(),
                 Numbers.oneDecimal(weight),
                 Numbers.twoDecimals(fat),
                 Numbers.twoDecimals(protein),
@@ -666,7 +647,6 @@ public class BotService {
         List<ObjectNode> buttons = listOf(
                 Keyboards.callback("✅ Сохранить запись", "receipt:confirm"),
                 Keyboards.callback("🌾 Изменить колхоз", "receipt:edit:farm"),
-                Keyboards.callback("🚚 Изменить секцию", "receipt:edit:section"),
                 Keyboards.callback("⚖️ Изменить вес", "receipt:edit:weight"),
                 Keyboards.callback("🧪 Изменить жир", "receipt:edit:fat"),
                 Keyboards.callback("🧬 Изменить белок", "receipt:edit:protein"),
@@ -693,11 +673,6 @@ public class BotService {
                 }
                 buttons.add(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel"));
                 sendToUser(user.maxUserId(), "Выберите новый колхоз для черновика записи.", buttons);
-            }
-            case "section" -> {
-                data.put("draft_edit_field", field);
-                repository.saveSession(user.maxUserId(), "RECEIPT_SECTION", data);
-                sendToUser(user.maxUserId(), "Напишите новую секцию текстом.", listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")));
             }
             case "weight" -> {
                 data.put("draft_edit_field", field);
@@ -779,7 +754,7 @@ public class BotService {
         List<ObjectNode> buttons = new ArrayList<>();
         for (MilkReceipt receipt : receipts) {
             buttons.add(Keyboards.callback(
-                    "🧾 " + Dates.formatDate(receipt.deliveryDate()) + " • " + receipt.farmName() + " • " + receipt.sectionLabel(),
+                    "🧾 " + Dates.formatDate(receipt.deliveryDate()) + " • " + receipt.farmName(),
                     "view:receipt:" + receipt.id()
             ));
         }
@@ -800,7 +775,6 @@ public class BotService {
         MilkReceipt receipt = repository.findReceiptById(receiptId).orElseThrow();
         List<ObjectNode> buttons = new ArrayList<>();
         if (canEditReceipt(user, receipt)) {
-            buttons.add(Keyboards.callback("🚚 Изменить секцию", "edit:receipt:" + receipt.id() + ":section"));
             buttons.add(Keyboards.callback("⚖️ Изменить вес", "edit:receipt:" + receipt.id() + ":weight"));
             buttons.add(Keyboards.callback("🧪 Изменить жир", "edit:receipt:" + receipt.id() + ":fat"));
             buttons.add(Keyboards.callback("🧬 Изменить белок", "edit:receipt:" + receipt.id() + ":protein"));
@@ -840,7 +814,6 @@ public class BotService {
         }
         repository.saveSession(user.maxUserId(), "EDIT_FIELD_INPUT", data);
         sendToUser(user.maxUserId(), switch (field) {
-            case "section" -> "Введите новую секцию для записи " + receipt.publicId() + ".";
             case "weight" -> "Введите новый вес в килограммах для записи " + receipt.publicId() + ".";
             case "fat" -> "Введите новый показатель жира для записи " + receipt.publicId() + ".";
             case "protein" -> "Введите новый показатель белка для записи " + receipt.publicId() + ".";
@@ -858,19 +831,11 @@ public class BotService {
             sendToUser(user.maxUserId(), "Запись уже недоступна для редактирования. Возвращаю в меню.", homeButtons(user));
             return;
         }
-        String section = receipt.sectionLabel();
         double weight = receipt.weightKg();
         double fat = receipt.fatPercent();
         double protein = receipt.proteinPercent();
 
         switch (field) {
-            case "section" -> {
-                if (text.isBlank()) {
-                    sendToUser(user.maxUserId(), "Секция не может быть пустой. Попробуйте ещё раз.", listOf(Keyboards.callback("🏠 В меню", "nav:home")));
-                    return;
-                }
-                section = text.trim();
-            }
             case "weight" -> {
                 Double value = parseDouble(text);
                 if (value == null || value <= 0) {
@@ -906,7 +871,7 @@ public class BotService {
                 receipt.id(),
                 user.id(),
                 receipt.farmId(),
-                section,
+                receipt.sectionLabel(),
                 weight,
                 fat,
                 protein,
@@ -1272,7 +1237,7 @@ public class BotService {
         int to = Math.min(from + RECORDS_PAGE_SIZE, receipts.size());
         List<ObjectNode> buttons = new ArrayList<>();
         for (MilkReceipt receipt : receipts.subList(from, to)) {
-            buttons.add(Keyboards.callback("🧾 " + receipt.pointName() + " • " + receipt.farmName() + " • " + receipt.sectionLabel(), "admin:record:view:" + receipt.id()));
+            buttons.add(Keyboards.callback("🧾 " + receipt.pointName() + " • " + receipt.farmName(), "admin:record:view:" + receipt.id()));
         }
         appendPageButtons(buttons, safePage, receipts.size(), RECORDS_PAGE_SIZE, "admin:records:date:" + date + ":page:");
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
@@ -1320,7 +1285,7 @@ public class BotService {
             buttons.add(Keyboards.callback("🌾 " + farm.name(), "report:farmday:farm:" + farm.id()));
         }
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
-        sendToUser(user.maxUserId(), "🔎 *Выберите колхоз*\n\nПокажу записи по секциям за отдельный день и приложу фотографии накладных.", buttons);
+        sendToUser(user.maxUserId(), "🔎 *Выберите колхоз*\n\nПокажу все записи за отдельный день и приложу фотографии накладных.", buttons);
     }
 
     private void chooseFarmDayReportFarm(BotUser user, long farmId) {
@@ -1505,8 +1470,8 @@ public class BotService {
             if (receipt.photoPayloadJson() != null && !receipt.photoPayloadJson().isBlank()) {
                 sendToUser(user.maxUserId(), """
                         📷 *Накладная*
-                        %s • %s • секция %s
-                        """.formatted(receipt.pointName(), receipt.farmName(), receipt.sectionLabel()), Attachments.imageWithKeyboard(receipt.photoPayloadJson(), null));
+                        %s • %s
+                        """.formatted(receipt.pointName(), receipt.farmName()), Attachments.imageWithKeyboard(receipt.photoPayloadJson(), null));
             }
         }
     }

@@ -19,7 +19,7 @@ public final class Texts {
                 • Большая Арать
                 • Пильна
 
-                Здесь можно оформить поставку по секциям, сохранить фото накладной и получить управленческую сводку без ручных таблиц.
+                Здесь можно оформить поставку, сохранить фото накладной и получить управленческую сводку без ручных таблиц.
 
                 Нажмите кнопку ниже, чтобы начать работу, или отправьте заявку на доступ.
                 """;
@@ -80,7 +80,6 @@ public final class Texts {
                 Дата: *%s*
                 Колхоз: *%s*
                 Пункт: *%s*
-                Секция: *%s*
                 Вес: *%s кг*
                 Жир: *%s%%*
                 Белок: *%s%%*
@@ -91,7 +90,6 @@ public final class Texts {
                 Dates.formatDate(receipt.deliveryDate()),
                 receipt.farmName(),
                 receipt.pointName(),
-                receipt.sectionLabel(),
                 Numbers.oneDecimal(receipt.weightKg()),
                 Numbers.twoDecimals(receipt.fatPercent()),
                 Numbers.twoDecimals(receipt.proteinPercent())
@@ -119,7 +117,6 @@ public final class Texts {
 
                 Колхоз: *%s*
                 Пункт: *%s*
-                Секция: *%s*
                 Дата поставки: *%s*
                 Принял: *%s*
                 Вес: *%s кг*
@@ -132,7 +129,6 @@ public final class Texts {
                 receipt.publicId(),
                 receipt.farmName(),
                 receipt.pointName(),
-                receipt.sectionLabel(),
                 Dates.formatDate(receipt.deliveryDate()),
                 receipt.createdByName(),
                 Numbers.oneDecimal(receipt.weightKg()),
