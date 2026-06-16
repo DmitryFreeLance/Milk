@@ -148,6 +148,7 @@ public class BotService {
                 sendReceiptConfirmation(user, data);
             }
             case "receipt:confirm" -> saveReceipt(user);
+            case "receipt:confirm:continue" -> saveReceiptAndContinueSameFarm(user);
             case "view:my_receipts" -> showMyReceipts(user);
             case "directory:farms" -> showFarmsDirectory(user);
             case "admin:requests" -> showPendingRequests(user);
@@ -655,6 +656,7 @@ public class BotService {
         );
         List<ObjectNode> buttons = listOf(
                 Keyboards.callback("✅ Сохранить запись", "receipt:confirm"),
+                Keyboards.callback("✅ Сохранить и ещё запись", "receipt:confirm:continue"),
                 Keyboards.callback("🌾 Изменить колхоз", "receipt:edit:farm"),
                 Keyboards.callback("⚖️ Изменить вес", "receipt:edit:weight"),
                 Keyboards.callback("🧪 Изменить жир", "receipt:edit:fat"),
@@ -711,6 +713,14 @@ public class BotService {
     }
 
     private void saveReceipt(BotUser user) {
+        saveReceipt(user, false);
+    }
+
+    private void saveReceiptAndContinueSameFarm(BotUser user) {
+        saveReceipt(user, true);
+    }
+
+    private void saveReceipt(BotUser user, boolean continueSameFarm) {
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         MilkReceipt receipt = repository.createReceipt(
                 user.id(),
@@ -730,11 +740,43 @@ public class BotService {
                 textOrNull(data, "original_message_id"),
                 null
         );
+        if (continueSameFarm) {
+            continueReceiptWithSameFarm(user, data, receipt);
+            return;
+        }
         clearSession(user);
         sendToUser(user.maxUserId(), Texts.receiptSaved(receipt), listOf(
                 Keyboards.callback("🥛 Новая приёмка", "receipt:new"),
                 Keyboards.callback("🧾 Мои записи", "view:my_receipts"),
                 Keyboards.callback("🏠 Главное меню", "nav:home")
+        ));
+    }
+
+    private void continueReceiptWithSameFarm(BotUser user, ObjectNode previousData, MilkReceipt receipt) {
+        Farm farm = repository.findFarm(previousData.path("farm_id").asLong()).orElseThrow();
+        ReceivingPoint point = repository.findPoint(previousData.path("point_id").asLong()).orElseThrow();
+
+        ObjectNode nextData = Jsons.object();
+        nextData.put("point_id", point.id());
+        nextData.put("farm_id", farm.id());
+        nextData.put("section_label", "Без секции");
+        nextData.put("delivery_date", previousData.path("delivery_date").asText(LocalDate.now(zoneId).toString()));
+        repository.saveSession(user.maxUserId(), "RECEIPT_WEIGHT", nextData);
+
+        sendToUser(user.maxUserId(), """
+                ✅ *Запись сохранена*
+
+                Номер записи: *%s*
+                Продолжаем новую приёмку для колхоза *%s* на пункте *%s*.
+
+                ⚖️ Введите вес в килограммах для следующей записи.
+                """.formatted(
+                receipt.publicId(),
+                farm.name(),
+                point.name()
+        ), listOf(
+                Keyboards.callback("🌾 Изменить колхоз", "receipt:edit:farm"),
+                Keyboards.callback("🏠 Отменить и выйти", "nav:cancel")
         ));
     }
 
