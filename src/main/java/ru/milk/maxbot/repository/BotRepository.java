@@ -40,11 +40,29 @@ public class BotRepository {
             if (existing.isPresent()) {
                 String updateSql = """
                         UPDATE users
-                           SET chat_id = ?,
-                               username = ?,
-                               first_name = ?,
-                               last_name = ?,
-                               display_name = ?,
+                           SET chat_id = COALESCE(?, chat_id),
+                               username = CASE
+                                   WHEN (username IS NULL OR TRIM(username) = '')
+                                        AND ? IS NOT NULL
+                                        AND TRIM(?) <> '' THEN ?
+                                   ELSE username
+                               END,
+                               first_name = CASE
+                                   WHEN (first_name IS NULL OR TRIM(first_name) = '')
+                                        AND ? IS NOT NULL
+                                        AND TRIM(?) <> '' THEN ?
+                                   ELSE first_name
+                               END,
+                               last_name = CASE
+                                   WHEN (last_name IS NULL OR TRIM(last_name) = '')
+                                        AND ? IS NOT NULL
+                                        AND TRIM(?) <> '' THEN ?
+                                   ELSE last_name
+                               END,
+                               display_name = CASE
+                                   WHEN display_name IS NULL OR TRIM(display_name) = '' THEN ?
+                                   ELSE display_name
+                               END,
                                updated_at = ?,
                                role = CASE
                                    WHEN role = 'PENDING' AND ? = 1 THEN 'ADMINISTRATOR'
@@ -55,12 +73,18 @@ public class BotRepository {
                 try (PreparedStatement ps = connection.prepareStatement(updateSql)) {
                     bindNullableLong(ps, 1, chatId);
                     ps.setString(2, username);
-                    ps.setString(3, firstName);
-                    ps.setString(4, lastName);
-                    ps.setString(5, displayName);
-                    ps.setString(6, now);
-                    ps.setInt(7, bootstrapAdmin ? 1 : 0);
-                    ps.setLong(8, maxUserId);
+                    ps.setString(3, username);
+                    ps.setString(4, username);
+                    ps.setString(5, firstName);
+                    ps.setString(6, firstName);
+                    ps.setString(7, firstName);
+                    ps.setString(8, lastName);
+                    ps.setString(9, lastName);
+                    ps.setString(10, lastName);
+                    ps.setString(11, displayName);
+                    ps.setString(12, now);
+                    ps.setInt(13, bootstrapAdmin ? 1 : 0);
+                    ps.setLong(14, maxUserId);
                     ps.executeUpdate();
                 }
             } else {
@@ -128,6 +152,21 @@ public class BotRepository {
             return executeUserList(ps);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list users page", e);
+        }
+    }
+
+    public Optional<BotUser> findUserById(long userId) {
+        String sql = "SELECT * FROM users WHERE id = ?";
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(mapUser(rs));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to find user by id", e);
         }
     }
 
@@ -431,6 +470,46 @@ public class BotRepository {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update phone", e);
+        }
+    }
+
+    public void updateUserEditableField(long userId, String field, String value) {
+        BotUser user = findUserById(userId).orElseThrow();
+        String firstName = user.firstName();
+        String lastName = user.lastName();
+        String username = user.username();
+        String phone = user.phone();
+
+        switch (field) {
+            case "first_name" -> firstName = value;
+            case "last_name" -> lastName = value;
+            case "username" -> username = value;
+            case "phone" -> phone = value;
+            default -> throw new IllegalArgumentException("Unknown editable field: " + field);
+        }
+
+        String displayName = buildDisplayName(firstName, lastName, username, user.maxUserId());
+        String sql = """
+                UPDATE users
+                   SET first_name = ?,
+                       last_name = ?,
+                       username = ?,
+                       display_name = ?,
+                       phone = ?,
+                       updated_at = ?
+                 WHERE id = ?
+                """;
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, firstName);
+            ps.setString(2, lastName);
+            ps.setString(3, username);
+            ps.setString(4, displayName);
+            ps.setString(5, phone);
+            ps.setString(6, Instant.now().toString());
+            ps.setLong(7, userId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to update user editable field", e);
         }
     }
 

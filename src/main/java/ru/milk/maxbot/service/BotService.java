@@ -213,6 +213,14 @@ public class BotService {
             changeUserRole(user, payload.substring("admin:user:role:".length()));
             return;
         }
+        if (payload.startsWith("admin:user:edit:")) {
+            openUserEditMenu(user, parseLong(payload.substring("admin:user:edit:".length())));
+            return;
+        }
+        if (payload.startsWith("admin:user:editfield:")) {
+            beginUserFieldEdit(user, payload.substring("admin:user:editfield:".length()));
+            return;
+        }
         if (payload.startsWith("admin:user:point:")) {
             changeUserPoint(user, payload.substring("admin:user:point:".length()));
             return;
@@ -295,6 +303,7 @@ public class BotService {
                 case "REPORT_CUSTOM_END" -> onCustomEndDate(user, text);
                 case "ADMIN_ADD_FARM" -> onNewFarmName(user, text);
                 case "ADMIN_RECORD_DATE" -> onAdminRecordDate(user, text);
+                case "ADMIN_USER_EDIT_INPUT" -> onAdminUserEditInput(user, text);
                 case "EDIT_FIELD_INPUT" -> onReceiptFieldEditInput(user, text);
                 case "EDIT_PHOTO_INPUT" -> onReceiptPhotoEditInput(user, attachments);
                 default -> onIdleMessage(user, text);
@@ -1048,12 +1057,14 @@ public class BotService {
             sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
             return;
         }
-        BotUser target = repository.listUsers().stream().filter(it -> it.id() == userId).findFirst().orElseThrow();
+        BotUser target = repository.findUserById(userId).orElseThrow();
         String pointName = target.receivingPointId() == null ? "не назначен" : repository.findPoint(target.receivingPointId()).map(ReceivingPoint::name).orElse("не найден");
         String firstName = target.firstName() == null || target.firstName().isBlank() ? "не указано" : target.firstName();
         String lastName = target.lastName() == null || target.lastName().isBlank() ? "не указана" : target.lastName();
+        String username = target.username() == null || target.username().isBlank() ? "не указан" : "@" + target.username().replaceFirst("^@", "");
         String phone = target.phone() == null || target.phone().isBlank() ? "не указан" : target.phone();
         List<ObjectNode> buttons = new ArrayList<>();
+        buttons.add(Keyboards.callback("✏️ Редактировать", "admin:user:edit:" + target.id()));
         buttons.add(Keyboards.callback("👨‍🔧 Сделать сотрудником", "admin:user:role:" + target.id() + ":EMPLOYEE"));
         buttons.add(Keyboards.callback("👔 Сделать директором", "admin:user:role:" + target.id() + ":DIRECTOR"));
         buttons.add(Keyboards.callback("🏢 Сделать гендиректором", "admin:user:role:" + target.id() + ":GENERAL_DIRECTOR"));
@@ -1068,22 +1079,109 @@ public class BotService {
         sendToUser(admin.maxUserId(), """
                 👤 *Карточка пользователя*
 
+                Профиль: *%s*
                 Имя: *%s*
                 Фамилия: *%s*
+                Username: *%s*
                 Телефон: *%s*
+                MAX ID: `%s`
                 Роль: *%s*
                 Пункт: *%s*
                 Активность: *%s*
                 Получает сводку: *%s*
                 """.formatted(
+                target.displayName(),
                 firstName,
                 lastName,
+                username,
                 phone,
+                target.maxUserId(),
                 target.role(),
                 pointName,
                 target.active() ? "активен" : "отключён",
                 target.dailyDigestEnabled() ? "да" : "нет"
         ), buttons);
+    }
+
+    private void openUserEditMenu(BotUser admin, long userId) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        BotUser target = repository.findUserById(userId).orElseThrow();
+        sendToUser(admin.maxUserId(), """
+                ✏️ *Редактирование карточки*
+
+                Выберите поле, которое нужно изменить. После этого отправьте новое значение одним сообщением.
+
+                Если поле нужно очистить, отправьте символ `-`.
+                """, listOf(
+                Keyboards.callback("👤 Имя", "admin:user:editfield:" + target.id() + ":first_name"),
+                Keyboards.callback("👥 Фамилия", "admin:user:editfield:" + target.id() + ":last_name"),
+                Keyboards.callback("📞 Телефон", "admin:user:editfield:" + target.id() + ":phone"),
+                Keyboards.callback("@ Username", "admin:user:editfield:" + target.id() + ":username"),
+                Keyboards.callback("🏠 К карточке", "admin:user:view:" + target.id())
+        ));
+    }
+
+    private void beginUserFieldEdit(BotUser admin, String payloadTail) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        String[] parts = payloadTail.split(":");
+        long userId = parseLong(parts[0]);
+        String field = parts[1];
+        repository.findUserById(userId).orElseThrow();
+
+        ObjectNode data = Jsons.object();
+        data.put("user_id", userId);
+        data.put("field", field);
+        repository.saveSession(admin.maxUserId(), "ADMIN_USER_EDIT_INPUT", data);
+
+        String prompt = switch (field) {
+            case "first_name" -> "Введите новое имя пользователя.";
+            case "last_name" -> "Введите новую фамилию пользователя.";
+            case "phone" -> "Введите новый номер телефона пользователя.";
+            case "username" -> "Введите новый username пользователя. Можно с символом @ или без него.";
+            default -> "Введите новое значение.";
+        };
+        sendToUser(admin.maxUserId(), prompt + "\n\nДля очистки поля отправьте `-`.", listOf(
+                Keyboards.callback("🏠 К карточке", "admin:user:view:" + userId),
+                Keyboards.callback("🏠 В меню", "nav:home")
+        ));
+    }
+
+    private void onAdminUserEditInput(BotUser admin, String text) {
+        if (!admin.role().isAdmin()) {
+            clearSession(admin);
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        ConversationSession session = repository.getSession(admin.maxUserId());
+        long userId = session.data().path("user_id").asLong();
+        String field = session.data().path("field").asText();
+        BotUser target = repository.findUserById(userId).orElseThrow();
+
+        String value = normalizeUserEditValue(field, text);
+        if (value == null && !"-".equals(text.trim())) {
+            sendToUser(admin.maxUserId(), switch (field) {
+                case "phone" -> "Телефон не должен быть пустым. Введите номер или `-`, чтобы очистить поле.";
+                case "username" -> "Username не должен быть пустым. Введите значение или `-`, чтобы очистить поле.";
+                case "first_name" -> "Имя не должно быть пустым. Введите значение или `-`, чтобы очистить поле.";
+                case "last_name" -> "Фамилия не должна быть пустой. Введите значение или `-`, чтобы очистить поле.";
+                default -> "Введите корректное значение или `-`, чтобы очистить поле.";
+            }, listOf(
+                    Keyboards.callback("🏠 К карточке", "admin:user:view:" + userId),
+                    Keyboards.callback("🏠 В меню", "nav:home")
+            ));
+            return;
+        }
+
+        repository.updateUserEditableField(target.id(), field, value);
+        clearSession(admin);
+        sendToUser(admin.maxUserId(), "✅ Карточка пользователя обновлена.", (ArrayNode) null);
+        showUserAdminCard(admin, target.id());
     }
 
     private void changeUserRole(BotUser admin, String payloadTail) {
@@ -1124,7 +1222,7 @@ public class BotService {
             sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
             return;
         }
-        BotUser target = repository.listUsers().stream().filter(it -> it.id() == userId).findFirst().orElseThrow();
+        BotUser target = repository.findUserById(userId).orElseThrow();
         repository.setUserActive(target.id(), !target.active());
         sendToUser(admin.maxUserId(), "✅ Статус пользователя обновлён.", adminButtons());
     }
@@ -1722,6 +1820,24 @@ public class BotService {
 
     private String textOrNull(ObjectNode data, String field) {
         return data.hasNonNull(field) ? data.get(field).asText() : null;
+    }
+
+    private String normalizeUserEditValue(String field, String text) {
+        if (text == null) {
+            return null;
+        }
+        String trimmed = text.trim();
+        if (trimmed.equals("-")) {
+            return null;
+        }
+        if (trimmed.isBlank()) {
+            return null;
+        }
+        return switch (field) {
+            case "username" -> trimmed.replaceFirst("^@", "");
+            case "phone", "first_name", "last_name" -> trimmed;
+            default -> trimmed;
+        };
     }
 
     private boolean handleGlobalCommand(BotUser user, String text) {
