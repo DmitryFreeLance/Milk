@@ -52,7 +52,7 @@ public final class Keyboards {
 
     public static ObjectNode callback(String text, String payload) {
         ObjectNode button = Jsons.object();
-        button.put("type", "message");
+        button.put("type", "callback");
         button.put("text", text);
         button.put("_bot_payload", payload);
         return button;
@@ -94,12 +94,16 @@ public final class Keyboards {
         ObjectNode button = Jsons.object();
         String type = source.path("type").asText("");
         String text = source.path("text").asText("");
+        String payload = source.path("_bot_payload").asText(source.path("payload").asText(""));
 
         if (!type.isBlank()) {
             button.put("type", type);
         }
         if (!text.isBlank()) {
             button.put("text", text);
+        }
+        if (!payload.isBlank()) {
+            button.put("payload", payload);
         }
         return button;
     }
