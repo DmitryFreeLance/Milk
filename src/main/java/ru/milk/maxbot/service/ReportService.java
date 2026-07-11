@@ -11,7 +11,6 @@ import ru.milk.maxbot.util.Numbers;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class ReportService {
     private final BotRepository repository;
@@ -90,7 +89,7 @@ public class ReportService {
 
     public String buildDailyDigest(LocalDate date) {
         StatsSummary total = repository.summarize(date, date, null, null);
-        List<NamedSummary> points = repository.summarizeByPoint(date, date);
+        String pointsBlock = buildDailyDigestPointsBlock(date);
         return """
                 📬 *Сводка за смену*
                 Дата: *%s*
@@ -102,12 +101,7 @@ public class ReportService {
                 """.formatted(
                 Dates.formatDate(date),
                 summaryBlock(total),
-                points.stream()
-                        .filter(point -> point.summary().recordsCount() > 0)
-                        .map(point -> "• %s — %s кг".formatted(
-                                point.name(),
-                                Numbers.oneDecimal(point.summary().totalWeightKg())))
-                        .collect(Collectors.joining("\n"))
+                pointsBlock
         );
     }
 
@@ -125,6 +119,37 @@ public class ReportService {
                 Средний белок: *%s%%*
                 """.formatted(
                 summary.recordsCount(),
+                Numbers.oneDecimal(summary.totalWeightKg()),
+                Numbers.twoDecimals(summary.weightedFatPercent()),
+                Numbers.twoDecimals(summary.weightedProteinPercent())
+        );
+    }
+
+    private String buildDailyDigestPointsBlock(LocalDate date) {
+        StringBuilder text = new StringBuilder();
+        List<NamedSummary> points = repository.summarizeByPoint(date, date).stream()
+                .filter(point -> point.summary().recordsCount() > 0)
+                .toList();
+
+        if (points.isEmpty()) {
+            return "Поставок за смену не найдено.";
+        }
+
+        for (NamedSummary point : points) {
+            text.append("• ").append(point.name()).append(" — ")
+                    .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг\n");
+
+            repository.summarizeByFarm(date, date, point.id()).stream()
+                    .filter(farm -> farm.summary().recordsCount() > 0)
+                    .forEach(farm -> text.append("  • ").append(farm.name()).append(" — ")
+                            .append(formatSummaryDetails(farm.summary())).append("\n"));
+        }
+
+        return text.toString().stripTrailing();
+    }
+
+    private String formatSummaryDetails(StatsSummary summary) {
+        return "%s кг, жир %s%%, белок %s%%".formatted(
                 Numbers.oneDecimal(summary.totalWeightKg()),
                 Numbers.twoDecimals(summary.weightedFatPercent()),
                 Numbers.twoDecimals(summary.weightedProteinPercent())
