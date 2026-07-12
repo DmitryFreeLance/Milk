@@ -109,6 +109,10 @@ public class MaxApiClient {
         ObjectNode body = Jsons.object();
         body.put("text", message.text());
         body.put("notify", message.notifyRecipients());
+
+        // ⭐ ГЛАВНОЕ ИСПРАВЛЕНИЕ: всегда добавляем поле payload
+        body.put("payload", "");
+
         if (message.attachments() != null) {
             body.set("attachments", message.attachments());
         }
