@@ -128,6 +128,11 @@ public class BotService {
     }
 
     private void dispatchCallback(BotUser user, String payload) {
+        if (!user.active() && !isInactiveUserCallbackAllowed(payload)) {
+            sendEntryPoint(user);
+            return;
+        }
+
         switch (payload) {
             case "start", "nav:home" -> sendEntryPoint(user);
             case "nav:cancel" -> {
@@ -276,6 +281,13 @@ public class BotService {
         }
 
         sendToUser(user.maxUserId(), "Команда не распознана. Открываю главное меню, чтобы мы не застряли.", homeButtons(user));
+    }
+
+    private boolean isInactiveUserCallbackAllowed(String payload) {
+        return switch (payload) {
+            case "start", "nav:home", "nav:cancel", "status:refresh" -> true;
+            default -> false;
+        };
     }
 
     private void handleMessage(BotUser user, JsonNode update) {

@@ -95,26 +95,13 @@ public final class Keyboards {
         String type = source.path("type").asText("");
         String text = source.path("text").asText("");
 
-        String botPayload = source.path("_bot_payload").asText("");
-        if (botPayload.isBlank()) {
-            botPayload = source.path("payload").asText("");
-        }
-
-        if (!type.isBlank()) {
+        if ("callback".equals(type)) {
+            button.put("type", "message");
+        } else if (!type.isBlank()) {
             button.put("type", type);
         }
         if (!text.isBlank()) {
             button.put("text", text);
-        }
-
-        if ("callback".equals(type) || "message".equals(type)) {
-            if (!botPayload.isBlank()) {
-                button.put("payload", botPayload);
-            }
-        } else {
-            if (!botPayload.isBlank()) {
-                button.put("payload", botPayload);
-            }
         }
 
         return button;
