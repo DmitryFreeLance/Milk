@@ -817,7 +817,7 @@ public class BotService {
         List<ObjectNode> buttons = new ArrayList<>();
         for (MilkReceipt receipt : receipts) {
             buttons.add(Keyboards.callback(
-                    "🧾 " + Dates.formatDate(receipt.deliveryDate()) + " • " + receipt.farmName(),
+                    "🧾 " + receiptButtonId(receipt) + " • " + Dates.formatDate(receipt.deliveryDate()) + " • " + receipt.farmName(),
                     "view:receipt:" + receipt.id()
             ));
         }
@@ -1389,11 +1389,19 @@ public class BotService {
         int to = Math.min(from + RECORDS_PAGE_SIZE, receipts.size());
         List<ObjectNode> buttons = new ArrayList<>();
         for (MilkReceipt receipt : receipts.subList(from, to)) {
-            buttons.add(Keyboards.callback("🧾 " + receipt.pointName() + " • " + receipt.farmName(), "admin:record:view:" + receipt.id()));
+            buttons.add(Keyboards.callback(
+                    "🧾 " + receiptButtonId(receipt) + " • " + receipt.pointName() + " • " + receipt.farmName(),
+                    "admin:record:view:" + receipt.id()
+            ));
         }
         appendPageButtons(buttons, safePage, receipts.size(), RECORDS_PAGE_SIZE, "admin:records:date:" + date + ":page:");
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(admin.maxUserId(), "✏️ *Записи за " + Dates.formatDate(date) + "*\n\nВыберите карточку для редактирования или удаления.", buttons);
+    }
+
+    private String receiptButtonId(MilkReceipt receipt) {
+        String publicId = receipt.publicId();
+        return publicId == null || publicId.isBlank() ? "#" + receipt.id() : publicId;
     }
 
     private void onAdminRecordDate(BotUser admin, String text) {
