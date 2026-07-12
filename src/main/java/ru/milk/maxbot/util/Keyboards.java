@@ -94,7 +94,7 @@ public final class Keyboards {
         ObjectNode button = Jsons.object();
         String type = source.path("type").asText("");
         String text = source.path("text").asText("");
-        String payload = source.path("_bot_payload").asText(source.path("payload").asText(""));
+        String botPayload = source.path("_bot_payload").asText("");
 
         if (!type.isBlank()) {
             button.put("type", type);
@@ -102,9 +102,20 @@ public final class Keyboards {
         if (!text.isBlank()) {
             button.put("text", text);
         }
-        if (!payload.isBlank()) {
-            button.put("payload", payload);
+
+        // Для callback и message кнопок используем _bot_payload
+        if ("callback".equals(type) || "message".equals(type)) {
+            if (!botPayload.isBlank()) {
+                button.put("_bot_payload", botPayload);
+            }
+        } else {
+            // Для других типов кнопок (request_contact и т.д.) используем payload
+            String payload = source.path("payload").asText("");
+            if (!payload.isBlank()) {
+                button.put("payload", payload);
+            }
         }
+
         return button;
     }
 }
