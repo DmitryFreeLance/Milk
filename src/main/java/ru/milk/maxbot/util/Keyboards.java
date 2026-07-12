@@ -54,7 +54,7 @@ public final class Keyboards {
         ObjectNode button = Jsons.object();
         button.put("type", "callback");
         button.put("text", text);
-        button.put("_bot_payload", payload);  // ВАЖНО: используем _bot_payload
+        button.put("_bot_payload", payload);
         return button;
     }
 
@@ -69,7 +69,7 @@ public final class Keyboards {
         ObjectNode button = Jsons.object();
         button.put("type", "message");
         button.put("text", text);
-        button.put("_bot_payload", payload);  // ВАЖНО: используем _bot_payload
+        button.put("_bot_payload", payload);
         return button;
     }
 
@@ -95,10 +95,7 @@ public final class Keyboards {
         String type = source.path("type").asText("");
         String text = source.path("text").asText("");
 
-        // Получаем payload из _bot_payload (как для callback, так и для message)
         String botPayload = source.path("_bot_payload").asText("");
-
-        // Для обратной совместимости: если нет _bot_payload, пробуем payload
         if (botPayload.isBlank()) {
             botPayload = source.path("payload").asText("");
         }
@@ -110,13 +107,11 @@ public final class Keyboards {
             button.put("text", text);
         }
 
-        // Для callback и message кнопок используем _bot_payload
         if ("callback".equals(type) || "message".equals(type)) {
             if (!botPayload.isBlank()) {
-                button.put("_bot_payload", botPayload);
+                button.put("payload", botPayload);
             }
         } else {
-            // Для других типов кнопок (request_contact и т.д.) используем payload
             if (!botPayload.isBlank()) {
                 button.put("payload", botPayload);
             }
