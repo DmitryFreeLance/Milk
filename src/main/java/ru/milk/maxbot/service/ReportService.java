@@ -137,7 +137,7 @@ public class ReportService {
 
         for (NamedSummary point : points) {
             text.append("• ").append(point.name()).append(" — ")
-                    .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг\n");
+                    .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг\n\n");
 
             repository.summarizeByFarm(date, date, point.id()).stream()
                     .filter(farm -> farm.summary().recordsCount() > 0)

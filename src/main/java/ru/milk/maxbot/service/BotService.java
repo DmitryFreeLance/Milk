@@ -1401,7 +1401,8 @@ public class BotService {
 
     private String receiptButtonId(MilkReceipt receipt) {
         String publicId = receipt.publicId();
-        return publicId == null || publicId.isBlank() ? "#" + receipt.id() : publicId;
+        String value = publicId == null || publicId.isBlank() ? String.valueOf(receipt.id()) : publicId;
+        return value.length() <= 3 ? value : value.substring(value.length() - 3);
     }
 
     private void onAdminRecordDate(BotUser admin, String text) {
