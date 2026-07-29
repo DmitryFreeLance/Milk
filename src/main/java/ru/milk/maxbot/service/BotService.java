@@ -39,6 +39,7 @@ public class BotService {
     private static final int USERS_PAGE_SIZE = 10;
     private static final int RECEIPTS_PAGE_SIZE = 8;
     private static final int RECORDS_PAGE_SIZE = 8;
+    private static final int REPORT_MESSAGE_MAX_LENGTH = 3_500;
 
     private final AppConfig config;
     private final BotRepository repository;
@@ -95,7 +96,7 @@ public class BotService {
     public void sendDailyDigestToUser(BotUser user, LocalDate date) {
         String text = reportService.buildDailyDigest(date);
         sendToUser(user.maxUserId(), text, listOf(
-                Keyboards.callback("📊 Открыть отчёты", "report:global:start"),
+                Keyboards.callback("📊 Подробный отчёт", "digest:details:" + date),
                 Keyboards.callback("🏠 Главное меню", "nav:home")
         ));
     }
@@ -165,6 +166,7 @@ public class BotService {
             case "report:point:start" -> startPointReport(user);
             case "report:global:start" -> startGlobalReport(user);
             case "report:excel:start" -> startExcelReport(user);
+            case "digest:today" -> sendTodayDigest(user);
             case "digest:toggle" -> toggleDigest(user);
             default -> handlePatternCallback(user, payload);
         }
@@ -277,6 +279,10 @@ public class BotService {
         }
         if (payload.startsWith("report:period:")) {
             onPeriodChoice(user, payload.substring("report:period:".length()));
+            return;
+        }
+        if (payload.startsWith("digest:details:")) {
+            sendDetailedDigest(user, payload.substring("digest:details:".length()));
             return;
         }
 
@@ -844,6 +850,7 @@ public class BotService {
             buttons.add(Keyboards.callback("📷 Заменить фото", "edit:receipt:" + receipt.id() + ":photo"));
         }
         if (user.role().isAdmin()) {
+            buttons.add(Keyboards.callback("📅 Изменить дату", "edit:receipt:" + receipt.id() + ":date"));
             buttons.add(Keyboards.callback("🔓 Разблокировать на 1 час", "admin:record:unlock:" + receipt.id()));
             buttons.add(Keyboards.callback("🗑️ Удалить запись", "admin:record:delete:" + receipt.id()));
         }
@@ -857,6 +864,10 @@ public class BotService {
         long receiptId = parseLong(parts[2]);
         String field = parts[3];
         MilkReceipt receipt = repository.findReceiptById(receiptId).orElseThrow();
+        if ("date".equals(field) && !user.role().isAdmin()) {
+            sendToUser(user.maxUserId(), "Изменять дату записи может только администратор.", homeButtons(user));
+            return;
+        }
         if (!canEditReceipt(user, receipt)) {
             sendToUser(user.maxUserId(), """
                     ⛔ Время самостоятельного редактирования уже истекло.
@@ -880,6 +891,7 @@ public class BotService {
             case "weight" -> "Введите новый вес в килограммах для записи " + receipt.publicId() + ".";
             case "fat" -> "Введите новый показатель жира для записи " + receipt.publicId() + ".";
             case "protein" -> "Введите новый показатель белка для записи " + receipt.publicId() + ".";
+            case "date" -> "Введите новую дату поставки в формате `дд.ММ.гггг` для записи " + receipt.publicId() + ".";
             default -> "Введите новое значение.";
         }, listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:home")));
     }
@@ -897,6 +909,7 @@ public class BotService {
         double weight = receipt.weightKg();
         double fat = receipt.fatPercent();
         double protein = receipt.proteinPercent();
+        LocalDate deliveryDate = receipt.deliveryDate();
 
         switch (field) {
             case "weight" -> {
@@ -923,6 +936,19 @@ public class BotService {
                 }
                 protein = value;
             }
+            case "date" -> {
+                if (!user.role().isAdmin()) {
+                    sendToUser(user.maxUserId(), "Изменять дату записи может только администратор.", homeButtons(user));
+                    clearSession(user);
+                    return;
+                }
+                LocalDate value = parseDate(text);
+                if (value == null) {
+                    sendToUser(user.maxUserId(), "Дата не распознана. Нужен формат `дд.ММ.гггг`.", listOf(Keyboards.callback("🏠 В меню", "nav:home")));
+                    return;
+                }
+                deliveryDate = value;
+            }
             default -> {
                 sendToUser(user.maxUserId(), "Поле для редактирования не найдено.", homeButtons(user));
                 clearSession(user);
@@ -935,6 +961,7 @@ public class BotService {
                 user.id(),
                 receipt.farmId(),
                 receipt.sectionLabel(),
+                deliveryDate,
                 weight,
                 fat,
                 protein,
@@ -974,6 +1001,7 @@ public class BotService {
                 user.id(),
                 receipt.farmId(),
                 receipt.sectionLabel(),
+                receipt.deliveryDate(),
                 receipt.weightKg(),
                 receipt.fatPercent(),
                 receipt.proteinPercent(),
@@ -1637,6 +1665,36 @@ public class BotService {
         }
     }
 
+    private void sendTodayDigest(BotUser user) {
+        if (!user.role().canViewReports()) {
+            sendToUser(user.maxUserId(), "Сводка за день доступна только руководящим ролям.", homeButtons(user));
+            return;
+        }
+        sendDailyDigestToUser(user, LocalDate.now(zoneId));
+    }
+
+    private void sendDetailedDigest(BotUser user, String dateRaw) {
+        if (!user.role().canViewReports()) {
+            sendToUser(user.maxUserId(), "Подробный отчёт доступен только руководящим ролям.", homeButtons(user));
+            return;
+        }
+        LocalDate date;
+        try {
+            date = LocalDate.parse(dateRaw);
+        } catch (Exception e) {
+            sendToUser(user.maxUserId(), "Не удалось определить дату отчёта. Показываю главное меню.", homeButtons(user));
+            return;
+        }
+        List<String> parts = splitMessage(reportService.buildDetailedDailyReport(date), REPORT_MESSAGE_MAX_LENGTH);
+        for (int index = 0; index < parts.size(); index++) {
+            if (index + 1 == parts.size()) {
+                sendToUser(user.maxUserId(), parts.get(index), reportResultButtons());
+            } else {
+                sendToUser(user.maxUserId(), parts.get(index), (ArrayNode) null);
+            }
+        }
+    }
+
     private void sendExcelReport(BotUser user, long farmId, LocalDate start, LocalDate end) {
         Path file = reportService.buildExcelFarmReport(farmId, start, end);
         JsonNode uploadPayload = maxApiClient.uploadLocalFile(file, "file");
@@ -1799,6 +1857,7 @@ public class BotService {
 
     private ArrayNode directorButtons() {
         return Keyboards.inline(listOf(
+                Keyboards.callback("📊 Сводка за сегодня", "digest:today"),
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
@@ -1814,6 +1873,7 @@ public class BotService {
                 Keyboards.callback("🌾 Колхозы", "admin:farms"),
                 Keyboards.callback("➕ Добавить приёмку", "admin:receipt:new"),
                 Keyboards.callback("✏️ Записи", "admin:records"),
+                Keyboards.callback("📊 Сводка за сегодня", "digest:today"),
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
@@ -1879,6 +1939,38 @@ public class BotService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private List<String> splitMessage(String text, int maxLength) {
+        if (text.length() <= maxLength) {
+            return List.of(text);
+        }
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : text.split("\\R", -1)) {
+            if (!current.isEmpty() && current.length() + line.length() + 1 > maxLength) {
+                parts.add(current.toString().stripTrailing());
+                current.setLength(0);
+            }
+            if (line.length() > maxLength) {
+                if (!current.isEmpty()) {
+                    parts.add(current.toString().stripTrailing());
+                    current.setLength(0);
+                }
+                for (int offset = 0; offset < line.length(); offset += maxLength) {
+                    parts.add(line.substring(offset, Math.min(offset + maxLength, line.length())));
+                }
+                continue;
+            }
+            if (!current.isEmpty()) {
+                current.append('\n');
+            }
+            current.append(line);
+        }
+        if (!current.isEmpty()) {
+            parts.add(current.toString().stripTrailing());
+        }
+        return parts;
     }
 
     private String textOrNull(ObjectNode data, String field) {
@@ -2123,6 +2215,7 @@ public class BotService {
             case "🏭 Сводка по пункту" -> "report:point:start";
             case "🌍 Сводка по всем пунктам" -> "report:global:start";
             case "📈 Excel и графики" -> "report:excel:start";
+            case "📊 Сводка за сегодня" -> "digest:today";
             case "📬 Вкл/выкл сводку смены" -> "digest:toggle";
             case "👥 Заявки на доступ" -> "admin:requests";
             case "🧑‍💼 Пользователи" -> "admin:users";

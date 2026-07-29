@@ -612,15 +612,8 @@ public class BotRepository {
     }
 
     public Optional<MilkReceipt> findReceiptById(long receiptId) {
-        String sql = baseReceiptSelect() + " WHERE mr.id = ?";
-        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
-            ps.setLong(1, receiptId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                return Optional.of(mapReceipt(rs));
-            }
+        try (Connection connection = database.getConnection()) {
+            return findReceiptById(connection, receiptId);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to find receipt", e);
         }
@@ -787,6 +780,7 @@ public class BotRepository {
                               long changedByUserId,
                               long farmId,
                               String sectionLabel,
+                              LocalDate deliveryDate,
                               double weightKg,
                               double fatPercent,
                               double proteinPercent,
@@ -800,11 +794,12 @@ public class BotRepository {
                               Instant adminOverrideUnlockedUntil) {
         try (Connection connection = database.getConnection()) {
             connection.setAutoCommit(false);
-            MilkReceipt before = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt before = findReceiptById(connection, receiptId).orElseThrow();
             String sql = """
                     UPDATE milk_receipts
                        SET farm_id = ?,
                            section_label = ?,
+                           delivery_date = ?,
                            weight_kg = ?,
                            fat_percent = ?,
                            protein_percent = ?,
@@ -822,22 +817,23 @@ public class BotRepository {
             try (PreparedStatement ps = connection.prepareStatement(sql)) {
                 ps.setLong(1, farmId);
                 ps.setString(2, sectionLabel);
-                ps.setDouble(3, weightKg);
-                ps.setDouble(4, fatPercent);
-                ps.setDouble(5, proteinPercent);
-                ps.setDouble(6, creditWeightKg);
-                ps.setString(7, photoToken);
-                ps.setString(8, photoPayloadJson);
-                bindNullableInt(ps, 9, photoWidth);
-                bindNullableInt(ps, 10, photoHeight);
-                ps.setString(11, photoStatus);
-                ps.setString(12, note);
-                ps.setString(13, adminOverrideUnlockedUntil == null ? null : adminOverrideUnlockedUntil.toString());
-                ps.setString(14, Instant.now().toString());
-                ps.setLong(15, receiptId);
+                ps.setString(3, deliveryDate.toString());
+                ps.setDouble(4, weightKg);
+                ps.setDouble(5, fatPercent);
+                ps.setDouble(6, proteinPercent);
+                ps.setDouble(7, creditWeightKg);
+                ps.setString(8, photoToken);
+                ps.setString(9, photoPayloadJson);
+                bindNullableInt(ps, 10, photoWidth);
+                bindNullableInt(ps, 11, photoHeight);
+                ps.setString(12, photoStatus);
+                ps.setString(13, note);
+                ps.setString(14, adminOverrideUnlockedUntil == null ? null : adminOverrideUnlockedUntil.toString());
+                ps.setString(15, Instant.now().toString());
+                ps.setLong(16, receiptId);
                 ps.executeUpdate();
             }
-            MilkReceipt after = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt after = findReceiptById(connection, receiptId).orElseThrow();
             insertAudit(connection, receiptId, changedByUserId, "UPDATE", Jsons.MAPPER.valueToTree(before), Jsons.MAPPER.valueToTree(after));
             connection.commit();
             connection.setAutoCommit(true);
@@ -850,7 +846,7 @@ public class BotRepository {
         Instant unlockUntil = Instant.now().plusSeconds(3600);
         try (Connection connection = database.getConnection()) {
             connection.setAutoCommit(false);
-            MilkReceipt before = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt before = findReceiptById(connection, receiptId).orElseThrow();
             try (PreparedStatement ps = connection.prepareStatement("""
                     UPDATE milk_receipts
                        SET admin_override_unlocked_until = ?, updated_at = ?
@@ -861,7 +857,7 @@ public class BotRepository {
                 ps.setLong(3, receiptId);
                 ps.executeUpdate();
             }
-            MilkReceipt after = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt after = findReceiptById(connection, receiptId).orElseThrow();
             insertAudit(connection, receiptId, changedByUserId, "UNLOCK", Jsons.MAPPER.valueToTree(before), Jsons.MAPPER.valueToTree(after));
             connection.commit();
             connection.setAutoCommit(true);
@@ -873,7 +869,7 @@ public class BotRepository {
     public void softDeleteReceipt(long receiptId, long changedByUserId) {
         try (Connection connection = database.getConnection()) {
             connection.setAutoCommit(false);
-            MilkReceipt before = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt before = findReceiptById(connection, receiptId).orElseThrow();
             try (PreparedStatement ps = connection.prepareStatement("""
                     UPDATE milk_receipts
                        SET deleted = 1, updated_at = ?
@@ -883,7 +879,7 @@ public class BotRepository {
                 ps.setLong(2, receiptId);
                 ps.executeUpdate();
             }
-            MilkReceipt after = findReceiptById(receiptId).orElseThrow();
+            MilkReceipt after = findReceiptById(connection, receiptId).orElseThrow();
             insertAudit(connection, receiptId, changedByUserId, "DELETE", Jsons.MAPPER.valueToTree(before), Jsons.MAPPER.valueToTree(after));
             connection.commit();
             connection.setAutoCommit(true);
@@ -1047,6 +1043,19 @@ public class BotRepository {
                 result.add(mapReceipt(rs));
             }
             return result;
+        }
+    }
+
+    private Optional<MilkReceipt> findReceiptById(Connection connection, long receiptId) throws SQLException {
+        String sql = baseReceiptSelect() + " WHERE mr.id = ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, receiptId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(mapReceipt(rs));
+            }
         }
     }
 

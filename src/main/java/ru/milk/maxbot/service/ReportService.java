@@ -105,6 +105,46 @@ public class ReportService {
         );
     }
 
+    public String buildDetailedDailyReport(LocalDate date) {
+        List<NamedSummary> points = repository.summarizeByPoint(date, date).stream()
+                .filter(point -> point.summary().recordsCount() > 0)
+                .toList();
+        if (points.isEmpty()) {
+            return """
+                    📊 *Подробный отчёт по приходу*
+                    Дата: *%s*
+
+                    Поставок за день не найдено.
+                    """.formatted(Dates.formatDate(date));
+        }
+
+        StringBuilder text = new StringBuilder();
+        text.append("📊 *Подробный отчёт по приходу*\n");
+        text.append("Дата: *").append(Dates.formatDate(date)).append("*\n\n");
+
+        for (NamedSummary point : points) {
+            text.append("🏭 *").append(point.name()).append("* — ")
+                    .append(formatSummaryDetails(point.summary())).append("\n\n");
+
+            List<NamedSummary> farms = repository.summarizeByFarm(date, date, point.id()).stream()
+                    .filter(farm -> farm.summary().recordsCount() > 0)
+                    .toList();
+            for (NamedSummary farm : farms) {
+                text.append("🌾 *").append(farm.name()).append("* — ")
+                        .append(formatSummaryDetails(farm.summary())).append("\n");
+
+                List<MilkReceipt> receipts = repository.listReceipts(date, date, point.id(), farm.id(), false);
+                for (int index = 0; index < receipts.size(); index++) {
+                    MilkReceipt receipt = receipts.get(index);
+                    text.append("  • ").append(receiptLabel(receipt, index + 1)).append(" — ")
+                            .append(formatReceiptDetails(receipt)).append("\n");
+                }
+                text.append("\n");
+            }
+        }
+        return text.toString().stripTrailing();
+    }
+
     public Path buildExcelFarmReport(long farmId, LocalDate start, LocalDate end) {
         Farm farm = repository.findFarm(farmId).orElseThrow();
         List<MilkReceipt> receipts = repository.listReceipts(start, end, null, farmId, false);
@@ -154,5 +194,25 @@ public class ReportService {
                 Numbers.twoDecimals(summary.weightedFatPercent()),
                 Numbers.twoDecimals(summary.weightedProteinPercent())
         );
+    }
+
+    private String formatReceiptDetails(MilkReceipt receipt) {
+        return "%s кг, жир %s%%, белок %s%%".formatted(
+                Numbers.oneDecimal(receipt.weightKg()),
+                Numbers.twoDecimals(receipt.fatPercent()),
+                Numbers.twoDecimals(receipt.proteinPercent())
+        );
+    }
+
+    private String receiptLabel(MilkReceipt receipt, int index) {
+        String section = receipt.sectionLabel();
+        if (section != null && !section.isBlank() && !"Без секции".equalsIgnoreCase(section)) {
+            return section;
+        }
+        String publicId = receipt.publicId();
+        String shortId = publicId == null || publicId.isBlank()
+                ? String.valueOf(receipt.id())
+                : publicId.substring(Math.max(0, publicId.length() - 3));
+        return "Приёмка " + index + " (№" + shortId + ")";
     }
 }
