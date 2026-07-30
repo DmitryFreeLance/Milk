@@ -3,6 +3,7 @@ package ru.milk.maxbot.service;
 import ru.milk.maxbot.domain.Farm;
 import ru.milk.maxbot.domain.MilkReceipt;
 import ru.milk.maxbot.domain.NamedSummary;
+import ru.milk.maxbot.domain.ReceivingPoint;
 import ru.milk.maxbot.domain.StatsSummary;
 import ru.milk.maxbot.repository.BotRepository;
 import ru.milk.maxbot.util.Dates;
@@ -145,10 +146,10 @@ public class ReportService {
         return text.toString().stripTrailing();
     }
 
-    public Path buildExcelFarmReport(long farmId, LocalDate start, LocalDate end) {
-        Farm farm = repository.findFarm(farmId).orElseThrow();
-        List<MilkReceipt> receipts = repository.listReceipts(start, end, null, farmId, false);
-        return excelReportService.buildFarmPeriodReport(farm, start, end, receipts);
+    public Path buildExcelPointReport(long pointId, LocalDate start, LocalDate end) {
+        ReceivingPoint point = repository.findPoint(pointId).orElseThrow();
+        List<MilkReceipt> receipts = repository.listReceipts(start, end, pointId, null, false);
+        return excelReportService.buildPointPeriodReport(point, start, end, receipts);
     }
 
     private String summaryBlock(StatsSummary summary) {

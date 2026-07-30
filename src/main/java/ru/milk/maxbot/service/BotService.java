@@ -270,7 +270,11 @@ public class BotService {
             return;
         }
         if (payload.startsWith("report:excel:farm:")) {
-            chooseFarmForExcel(user, parseLong(payload.substring("report:excel:farm:".length())));
+            startExcelReport(user);
+            return;
+        }
+        if (payload.startsWith("report:excel:point:")) {
+            choosePointForExcel(user, parseLong(payload.substring("report:excel:point:".length())));
             return;
         }
         if (payload.startsWith("report:day:")) {
@@ -1548,23 +1552,23 @@ public class BotService {
         }
         ObjectNode data = Jsons.object();
         data.put("report_mode", "EXCEL");
-        repository.saveSession(user.maxUserId(), "REPORT_FARM_SELECT", data);
+        repository.saveSession(user.maxUserId(), "REPORT_POINT_SELECT", data);
         List<ObjectNode> buttons = new ArrayList<>();
-        for (Farm farm : repository.listFarms(true)) {
-            buttons.add(Keyboards.callback("🌾 " + farm.name(), "report:excel:farm:" + farm.id()));
+        for (ReceivingPoint point : repository.listPoints()) {
+            buttons.add(Keyboards.callback("🏭 Пункт: " + point.name(), "report:excel:point:" + point.id()));
         }
         buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
         sendToUser(user.maxUserId(), """
-                📈 *Excel и графики*
+                📈 *Excel по пункту*
 
-                Выберите колхоз. Я соберу файл с данными и простыми графиками по среднему весу, жиру и белку за период.
+                Выберите пункт приёмки. В файле будут все приходы за период, итоги по дням и общие итоги по колхозам.
                 """, buttons);
     }
 
-    private void chooseFarmForExcel(BotUser user, long farmId) {
+    private void choosePointForExcel(BotUser user, long pointId) {
         ObjectNode data = editableData(repository.getSession(user.maxUserId()));
         data.put("report_mode", "EXCEL");
-        data.put("farm_id", farmId);
+        data.put("point_id", pointId);
         repository.saveSession(user.maxUserId(), "REPORT_PERIOD_CHOOSE", data);
         sendPeriodChooser(user);
     }
@@ -1647,7 +1651,7 @@ public class BotService {
         switch (mode) {
             case "POINT" -> sendToUser(user.maxUserId(), reportService.buildPointPeriodReport(data.path("point_id").asLong(), start, end), reportResultButtons());
             case "GLOBAL" -> sendToUser(user.maxUserId(), reportService.buildGlobalPeriodReport(start, end), reportResultButtons());
-            case "EXCEL" -> sendExcelReport(user, data.path("farm_id").asLong(), start, end);
+            case "EXCEL" -> sendExcelReport(user, data.path("point_id").asLong(), start, end);
             default -> sendToUser(user.maxUserId(), "Не удалось определить тип отчёта. Возвращаю в меню.", homeButtons(user));
         }
     }
@@ -1695,15 +1699,15 @@ public class BotService {
         }
     }
 
-    private void sendExcelReport(BotUser user, long farmId, LocalDate start, LocalDate end) {
-        Path file = reportService.buildExcelFarmReport(farmId, start, end);
+    private void sendExcelReport(BotUser user, long pointId, LocalDate start, LocalDate end) {
+        Path file = reportService.buildExcelPointReport(pointId, start, end);
         JsonNode uploadPayload = maxApiClient.uploadLocalFile(file, "file");
         List<ObjectNode> buttons = listOf(Keyboards.callback("🏠 Главное меню", "nav:home"));
         rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), """
-                📈 *Excel-отчёт готов*
+                📈 *Excel-отчёт по пункту готов*
 
-                Внутри файл с таблицей и простыми графиками по среднему весу, жиру и белку за выбранный период.
+                На первом листе находятся все приёмки, на втором — итоги по дням и по колхозам.
                 """, Attachments.fileWithKeyboard(uploadPayload, Keyboards.inline(buttons)));
     }
 
@@ -1861,7 +1865,7 @@ public class BotService {
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
-                Keyboards.callback("📈 Excel и графики", "report:excel:start"),
+                Keyboards.callback("📈 Excel по пункту", "report:excel:start"),
                 Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle")
         ));
     }
@@ -1877,7 +1881,7 @@ public class BotService {
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
-                Keyboards.callback("📈 Excel и графики", "report:excel:start"),
+                Keyboards.callback("📈 Excel по пункту", "report:excel:start"),
                 Keyboards.callback("📬 Вкл/выкл сводку смены", "digest:toggle")
         ));
     }
@@ -2214,7 +2218,7 @@ public class BotService {
             case "🔎 Колхоз за день" -> "report:farmday:start";
             case "🏭 Сводка по пункту" -> "report:point:start";
             case "🌍 Сводка по всем пунктам" -> "report:global:start";
-            case "📈 Excel и графики" -> "report:excel:start";
+            case "📈 Excel и графики", "📈 Excel по пункту" -> "report:excel:start";
             case "📊 Сводка за сегодня" -> "digest:today";
             case "📬 Вкл/выкл сводку смены" -> "digest:toggle";
             case "👥 Заявки на доступ" -> "admin:requests";

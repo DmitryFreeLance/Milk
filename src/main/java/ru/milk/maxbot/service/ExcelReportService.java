@@ -1,24 +1,18 @@
 package ru.milk.maxbot.service;
 
+import org.apache.poi.ss.usermodel.BorderStyle;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.xddf.usermodel.chart.AxisCrosses;
-import org.apache.poi.xddf.usermodel.chart.AxisPosition;
-import org.apache.poi.xddf.usermodel.chart.ChartTypes;
-import org.apache.poi.xddf.usermodel.chart.LegendPosition;
-import org.apache.poi.xddf.usermodel.chart.MarkerStyle;
-import org.apache.poi.xddf.usermodel.chart.XDDFCategoryAxis;
-import org.apache.poi.xddf.usermodel.chart.XDDFChartLegend;
-import org.apache.poi.xddf.usermodel.chart.XDDFDataSource;
-import org.apache.poi.xddf.usermodel.chart.XDDFLineChartData;
-import org.apache.poi.xddf.usermodel.chart.XDDFNumericalDataSource;
-import org.apache.poi.xddf.usermodel.chart.XDDFValueAxis;
-import org.apache.poi.xssf.usermodel.XSSFChart;
-import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
-import org.apache.poi.xssf.usermodel.XSSFDrawing;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import ru.milk.maxbot.domain.Farm;
 import ru.milk.maxbot.domain.MilkReceipt;
+import ru.milk.maxbot.domain.ReceivingPoint;
 import ru.milk.maxbot.util.Dates;
 
 import java.io.IOException;
@@ -31,177 +25,292 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 public class ExcelReportService {
-    public Path buildFarmPeriodReport(Farm farm, LocalDate start, LocalDate end, List<MilkReceipt> receipts) {
-        try {
-            Path tempFile = Files.createTempFile("milk-report-" + farm.id() + "-", ".xlsx");
-            try (XSSFWorkbook workbook = new XSSFWorkbook(); OutputStream outputStream = Files.newOutputStream(tempFile)) {
-                XSSFSheet rawSheet = workbook.createSheet("Данные");
-                XSSFSheet summarySheet = workbook.createSheet("Общие данные");
-                XSSFSheet chartSheet = workbook.createSheet("Графики");
+    private static final int INTAKE_COLUMNS = 5;
 
+    public Path buildPointPeriodReport(ReceivingPoint point,
+                                       LocalDate start,
+                                       LocalDate end,
+                                       List<MilkReceipt> receipts) {
+        try {
+            Path tempFile = Files.createTempFile("milk-point-report-" + point.id() + "-", ".xlsx");
+            try (XSSFWorkbook workbook = new XSSFWorkbook();
+                 OutputStream outputStream = Files.newOutputStream(tempFile)) {
+                WorkbookStyles styles = createStyles(workbook);
                 List<MilkReceipt> orderedReceipts = receipts.stream()
                         .sorted(Comparator.comparing(MilkReceipt::deliveryDate)
-                                .thenComparing(MilkReceipt::pointName)
+                                .thenComparing(MilkReceipt::farmName)
                                 .thenComparing(MilkReceipt::createdAt))
                         .toList();
-                List<DailyAggregate> rows = aggregateByDay(orderedReceipts);
 
-                writeRawDataSheet(rawSheet, orderedReceipts);
-                writeSummarySheet(summarySheet, rows);
-                writeCharts(chartSheet, rows, farm.name(), start, end);
-
+                writeIntakeSheet(workbook.createSheet("Приёмки"), point, start, end, orderedReceipts, styles);
+                writeSummarySheet(workbook.createSheet("Сводка"), point, start, end, orderedReceipts, styles);
+                workbook.setActiveSheet(0);
                 workbook.write(outputStream);
             }
             return tempFile;
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to build Excel report", e);
+            throw new IllegalStateException("Failed to build point Excel report", e);
         }
     }
 
-    private void writeRawDataSheet(XSSFSheet sheet, List<MilkReceipt> receipts) {
-        Row header = sheet.createRow(0);
-        header.createCell(0).setCellValue("Дата");
-        header.createCell(1).setCellValue("Пункт");
-        header.createCell(2).setCellValue("Вес, кг");
-        header.createCell(3).setCellValue("Жир, %");
-        header.createCell(4).setCellValue("Белок, %");
-        header.createCell(5).setCellValue("Принял");
-        header.createCell(6).setCellValue("Статус фото");
-        header.createCell(7).setCellValue("Номер записи");
+    private void writeIntakeSheet(XSSFSheet sheet,
+                                  ReceivingPoint point,
+                                  LocalDate start,
+                                  LocalDate end,
+                                  List<MilkReceipt> receipts,
+                                  WorkbookStyles styles) {
+        configureSheet(sheet);
+        writeTitle(sheet, "Приход на пункт: " + point.name(), styles);
+        writePeriod(sheet, start, end, styles);
 
-        int rowIndex = 1;
+        Row header = sheet.createRow(3);
+        writeHeaders(header, List.of("Дата", "Колхоз", "Вес, кг", "Жир, %", "Белок, %"), styles.header());
+
+        int rowIndex = 4;
         for (MilkReceipt receipt : receipts) {
             Row row = sheet.createRow(rowIndex++);
             row.createCell(0).setCellValue(Dates.formatDate(receipt.deliveryDate()));
-            row.createCell(1).setCellValue(receipt.pointName());
+            row.getCell(0).setCellStyle(styles.date());
+            row.createCell(1).setCellValue(receipt.farmName());
+            row.getCell(1).setCellStyle(styles.text());
             row.createCell(2).setCellValue(receipt.weightKg());
+            row.getCell(2).setCellStyle(styles.weight());
             row.createCell(3).setCellValue(receipt.fatPercent());
+            row.getCell(3).setCellStyle(styles.quality());
             row.createCell(4).setCellValue(receipt.proteinPercent());
-            row.createCell(5).setCellValue(receipt.createdByName());
-            row.createCell(6).setCellValue(receipt.photoStatus());
-            row.createCell(7).setCellValue(receipt.publicId());
+            row.getCell(4).setCellStyle(styles.quality());
         }
 
-        autoSize(sheet, 8);
+        if (receipts.isEmpty()) {
+            Row empty = sheet.createRow(rowIndex);
+            empty.createCell(0).setCellValue("За выбранный период приёмок не найдено");
+            empty.getCell(0).setCellStyle(styles.note());
+            sheet.addMergedRegion(new CellRangeAddress(rowIndex, rowIndex, 0, INTAKE_COLUMNS - 1));
+        } else {
+            sheet.setAutoFilter(new CellRangeAddress(3, rowIndex - 1, 0, INTAKE_COLUMNS - 1));
+        }
+
+        sheet.createFreezePane(0, 4);
+        sheet.setColumnWidth(0, 14 * 256);
+        sheet.setColumnWidth(1, 28 * 256);
+        sheet.setColumnWidth(2, 16 * 256);
+        sheet.setColumnWidth(3, 14 * 256);
+        sheet.setColumnWidth(4, 14 * 256);
     }
 
-    private List<DailyAggregate> aggregateByDay(List<MilkReceipt> receipts) {
-        Map<LocalDate, List<MilkReceipt>> grouped = new LinkedHashMap<>();
-        for (MilkReceipt receipt : receipts) {
-            grouped.computeIfAbsent(receipt.deliveryDate(), ignored -> new ArrayList<>()).add(receipt);
+    private void writeSummarySheet(XSSFSheet sheet,
+                                   ReceivingPoint point,
+                                   LocalDate start,
+                                   LocalDate end,
+                                   List<MilkReceipt> receipts,
+                                   WorkbookStyles styles) {
+        configureSheet(sheet);
+        writeTitle(sheet, "Сводка по пункту: " + point.name(), styles);
+        writePeriod(sheet, start, end, styles);
+
+        Aggregate total = aggregate(receipts);
+        writeSectionTitle(sheet, 3, "Итого за период", styles);
+        Row totalHeader = sheet.createRow(4);
+        writeHeaders(totalHeader, List.of("Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
+        writeAggregateRow(sheet.createRow(5), total, styles);
+
+        int rowIndex = 8;
+        writeSectionTitle(sheet, rowIndex++, "Суммарно по дням", styles);
+        Row dailyHeader = sheet.createRow(rowIndex++);
+        writeHeaders(dailyHeader, List.of("Дата", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
+        for (Map.Entry<LocalDate, Aggregate> entry : aggregateByDay(receipts).entrySet()) {
+            Row row = sheet.createRow(rowIndex++);
+            row.createCell(0).setCellValue(Dates.formatDate(entry.getKey()));
+            row.getCell(0).setCellStyle(styles.date());
+            writeAggregateCells(row, 1, entry.getValue(), styles);
         }
 
-        List<DailyAggregate> result = new ArrayList<>();
-        for (Map.Entry<LocalDate, List<MilkReceipt>> entry : grouped.entrySet()) {
-            double totalWeight = entry.getValue().stream().mapToDouble(MilkReceipt::weightKg).sum();
-            double avgFat = totalWeight == 0 ? 0 : entry.getValue().stream().mapToDouble(it -> it.weightKg() * it.fatPercent()).sum() / totalWeight;
-            double avgProtein = totalWeight == 0 ? 0 : entry.getValue().stream().mapToDouble(it -> it.weightKg() * it.proteinPercent()).sum() / totalWeight;
-            result.add(new DailyAggregate(entry.getKey(), totalWeight, avgFat, avgProtein));
+        rowIndex++;
+        writeSectionTitle(sheet, rowIndex++, "Суммарно по колхозам", styles);
+        Row farmHeader = sheet.createRow(rowIndex++);
+        writeHeaders(farmHeader, List.of("Колхоз", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
+        for (Map.Entry<String, Aggregate> entry : aggregateByFarm(receipts).entrySet()) {
+            Row row = sheet.createRow(rowIndex++);
+            row.createCell(0).setCellValue(entry.getKey());
+            row.getCell(0).setCellStyle(styles.text());
+            writeAggregateCells(row, 1, entry.getValue(), styles);
         }
+
+        sheet.createFreezePane(0, 3);
+        sheet.setColumnWidth(0, 28 * 256);
+        sheet.setColumnWidth(1, 14 * 256);
+        sheet.setColumnWidth(2, 16 * 256);
+        sheet.setColumnWidth(3, 20 * 256);
+        sheet.setColumnWidth(4, 22 * 256);
+    }
+
+    private void writeTitle(XSSFSheet sheet, String title, WorkbookStyles styles) {
+        Row row = sheet.createRow(0);
+        row.setHeightInPoints(28);
+        row.createCell(0).setCellValue(title);
+        row.getCell(0).setCellStyle(styles.title());
+        sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, INTAKE_COLUMNS - 1));
+    }
+
+    private void writePeriod(XSSFSheet sheet, LocalDate start, LocalDate end, WorkbookStyles styles) {
+        Row row = sheet.createRow(1);
+        row.createCell(0).setCellValue("Период: " + Dates.formatDate(start) + " - " + Dates.formatDate(end));
+        row.getCell(0).setCellStyle(styles.meta());
+        sheet.addMergedRegion(new CellRangeAddress(1, 1, 0, INTAKE_COLUMNS - 1));
+    }
+
+    private void writeSectionTitle(XSSFSheet sheet, int rowIndex, String title, WorkbookStyles styles) {
+        Row row = sheet.createRow(rowIndex);
+        row.setHeightInPoints(22);
+        row.createCell(0).setCellValue(title);
+        row.getCell(0).setCellStyle(styles.section());
+        sheet.addMergedRegion(new CellRangeAddress(rowIndex, rowIndex, 0, INTAKE_COLUMNS - 1));
+    }
+
+    private void writeHeaders(Row row, List<String> labels, CellStyle style) {
+        row.setHeightInPoints(22);
+        for (int index = 0; index < labels.size(); index++) {
+            row.createCell(index).setCellValue(labels.get(index));
+            row.getCell(index).setCellStyle(style);
+        }
+    }
+
+    private void writeAggregateRow(Row row, Aggregate aggregate, WorkbookStyles styles) {
+        writeAggregateCells(row, 0, aggregate, styles);
+    }
+
+    private void writeAggregateCells(Row row, int startColumn, Aggregate aggregate, WorkbookStyles styles) {
+        row.createCell(startColumn).setCellValue(aggregate.recordsCount());
+        row.getCell(startColumn).setCellStyle(styles.integer());
+        row.createCell(startColumn + 1).setCellValue(aggregate.weightKg());
+        row.getCell(startColumn + 1).setCellStyle(styles.weight());
+        row.createCell(startColumn + 2).setCellValue(aggregate.fatPercent());
+        row.getCell(startColumn + 2).setCellStyle(styles.quality());
+        row.createCell(startColumn + 3).setCellValue(aggregate.proteinPercent());
+        row.getCell(startColumn + 3).setCellStyle(styles.quality());
+    }
+
+    private Map<LocalDate, Aggregate> aggregateByDay(List<MilkReceipt> receipts) {
+        Map<LocalDate, List<MilkReceipt>> grouped = new TreeMap<>();
+        receipts.forEach(receipt -> grouped.computeIfAbsent(receipt.deliveryDate(), ignored -> new ArrayList<>()).add(receipt));
+        Map<LocalDate, Aggregate> result = new LinkedHashMap<>();
+        grouped.forEach((date, rows) -> result.put(date, aggregate(rows)));
         return result;
     }
 
-    private void writeSummarySheet(XSSFSheet sheet, List<DailyAggregate> rows) {
-        Row header = sheet.createRow(0);
-        header.createCell(0).setCellValue("Дата");
-        header.createCell(1).setCellValue("Вес, кг");
-        header.createCell(2).setCellValue("Жир, %");
-        header.createCell(3).setCellValue("Белок, %");
-
-        int rowIndex = 1;
-        for (DailyAggregate aggregate : rows) {
-            Row row = sheet.createRow(rowIndex++);
-            row.createCell(0).setCellValue(Dates.formatDate(aggregate.date()));
-            row.createCell(1).setCellValue(aggregate.weightKg());
-            row.createCell(2).setCellValue(aggregate.fatPercent());
-            row.createCell(3).setCellValue(aggregate.proteinPercent());
-        }
-
-        autoSize(sheet, 4);
+    private Map<String, Aggregate> aggregateByFarm(List<MilkReceipt> receipts) {
+        Map<String, List<MilkReceipt>> grouped = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        receipts.forEach(receipt -> grouped.computeIfAbsent(receipt.farmName(), ignored -> new ArrayList<>()).add(receipt));
+        Map<String, Aggregate> result = new LinkedHashMap<>();
+        grouped.forEach((farm, rows) -> result.put(farm, aggregate(rows)));
+        return result;
     }
 
-    private void writeCharts(XSSFSheet chartSheet, List<DailyAggregate> rows, String farmName, LocalDate start, LocalDate end) {
-        Row meta = chartSheet.createRow(0);
-        meta.createCell(0).setCellValue("Колхоз: " + farmName);
-        meta.createCell(1).setCellValue("Период: " + Dates.formatDate(start) + " - " + Dates.formatDate(end));
-
-        if (rows.isEmpty()) {
-            Row row = chartSheet.createRow(2);
-            row.createCell(0).setCellValue("За выбранный период нет данных для графиков");
-            return;
-        }
-
-        Row header = chartSheet.createRow(2);
-        header.createCell(0).setCellValue("Дата");
-        header.createCell(1).setCellValue("Вес, кг");
-        header.createCell(2).setCellValue("Жир, %");
-        header.createCell(3).setCellValue("Белок, %");
-
-        int rowIndex = 3;
-        for (DailyAggregate aggregate : rows) {
-            Row row = chartSheet.createRow(rowIndex++);
-            row.createCell(0).setCellValue(Dates.formatDate(aggregate.date()));
-            row.createCell(1).setCellValue(aggregate.weightKg());
-            row.createCell(2).setCellValue(aggregate.fatPercent());
-            row.createCell(3).setCellValue(aggregate.proteinPercent());
-        }
-
-        XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
-        createChart(drawing, chartSheet, 5, 1, 13, 16, "Вес", 1, rows.size());
-        createChart(drawing, chartSheet, 13, 1, 21, 16, "Жир", 2, rows.size());
-        createChart(drawing, chartSheet, 21, 1, 29, 16, "Белок", 3, rows.size());
-
-        autoSize(chartSheet, 4);
+    private Aggregate aggregate(List<MilkReceipt> receipts) {
+        double weight = receipts.stream().mapToDouble(MilkReceipt::weightKg).sum();
+        double fat = weight == 0 ? 0 : receipts.stream()
+                .mapToDouble(receipt -> receipt.weightKg() * receipt.fatPercent())
+                .sum() / weight;
+        double protein = weight == 0 ? 0 : receipts.stream()
+                .mapToDouble(receipt -> receipt.weightKg() * receipt.proteinPercent())
+                .sum() / weight;
+        return new Aggregate(receipts.size(), weight, fat, protein);
     }
 
-    private void createChart(XSSFDrawing drawing,
-                             XSSFSheet sheet,
-                             int col1,
-                             int row1,
-                             int col2,
-                             int row2,
-                             String title,
-                             int valueColumn,
-                             int dataRowCount) {
-        XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, col1, row1, col2, row2);
-        XSSFChart chart = drawing.createChart(anchor);
-        chart.setTitleText(title);
-        chart.setTitleOverlay(false);
-
-        XDDFChartLegend legend = chart.getOrAddLegend();
-        legend.setPosition(LegendPosition.BOTTOM);
-
-        XDDFCategoryAxis bottomAxis = chart.createCategoryAxis(AxisPosition.BOTTOM);
-        XDDFValueAxis leftAxis = chart.createValueAxis(AxisPosition.LEFT);
-        leftAxis.setCrosses(AxisCrosses.AUTO_ZERO);
-
-        int startRow = 3;
-        int endRow = startRow + dataRowCount - 1;
-        XDDFDataSource<String> dates = org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory.fromStringCellRange(
-                sheet,
-                new org.apache.poi.ss.util.CellRangeAddress(startRow, endRow, 0, 0)
-        );
-        XDDFNumericalDataSource<Double> values = org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory.fromNumericCellRange(
-                sheet,
-                new org.apache.poi.ss.util.CellRangeAddress(startRow, endRow, valueColumn, valueColumn)
-        );
-
-        XDDFLineChartData data = (XDDFLineChartData) chart.createData(ChartTypes.LINE, bottomAxis, leftAxis);
-        XDDFLineChartData.Series series = (XDDFLineChartData.Series) data.addSeries(dates, values);
-        series.setTitle(title, null);
-        series.setSmooth(false);
-        series.setMarkerStyle(MarkerStyle.CIRCLE);
-        chart.plot(data);
+    private void configureSheet(XSSFSheet sheet) {
+        sheet.setDisplayGridlines(false);
+        sheet.setFitToPage(true);
+        sheet.getPrintSetup().setLandscape(true);
+        sheet.getPrintSetup().setFitWidth((short) 1);
+        sheet.getPrintSetup().setFitHeight((short) 0);
+        sheet.setMargin(XSSFSheet.LeftMargin, 0.3);
+        sheet.setMargin(XSSFSheet.RightMargin, 0.3);
     }
 
-    private void autoSize(XSSFSheet sheet, int columns) {
-        for (int i = 0; i < columns; i++) {
-            sheet.autoSizeColumn(i);
-        }
+    private WorkbookStyles createStyles(XSSFWorkbook workbook) {
+        CellStyle title = workbook.createCellStyle();
+        title.setFillForegroundColor(IndexedColors.DARK_BLUE.getIndex());
+        title.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        title.setAlignment(HorizontalAlignment.LEFT);
+        title.setVerticalAlignment(VerticalAlignment.CENTER);
+        Font titleFont = workbook.createFont();
+        titleFont.setBold(true);
+        titleFont.setFontHeightInPoints((short) 16);
+        titleFont.setColor(IndexedColors.WHITE.getIndex());
+        title.setFont(titleFont);
+
+        CellStyle meta = workbook.createCellStyle();
+        Font metaFont = workbook.createFont();
+        metaFont.setItalic(true);
+        metaFont.setColor(IndexedColors.GREY_50_PERCENT.getIndex());
+        meta.setFont(metaFont);
+
+        CellStyle section = workbook.createCellStyle();
+        section.setFillForegroundColor(IndexedColors.LIGHT_CORNFLOWER_BLUE.getIndex());
+        section.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        Font sectionFont = workbook.createFont();
+        sectionFont.setBold(true);
+        section.setFont(sectionFont);
+        section.setVerticalAlignment(VerticalAlignment.CENTER);
+
+        CellStyle header = workbook.createCellStyle();
+        header.setFillForegroundColor(IndexedColors.BLUE_GREY.getIndex());
+        header.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        header.setAlignment(HorizontalAlignment.CENTER);
+        header.setVerticalAlignment(VerticalAlignment.CENTER);
+        header.setBorderBottom(BorderStyle.THIN);
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerFont.setColor(IndexedColors.WHITE.getIndex());
+        header.setFont(headerFont);
+
+        CellStyle text = workbook.createCellStyle();
+        text.setVerticalAlignment(VerticalAlignment.CENTER);
+
+        CellStyle date = workbook.createCellStyle();
+        date.cloneStyleFrom(text);
+        date.setAlignment(HorizontalAlignment.CENTER);
+
+        CellStyle weight = workbook.createCellStyle();
+        weight.setAlignment(HorizontalAlignment.RIGHT);
+        weight.setDataFormat(workbook.createDataFormat().getFormat("#,##0.0"));
+
+        CellStyle quality = workbook.createCellStyle();
+        quality.setAlignment(HorizontalAlignment.RIGHT);
+        quality.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
+
+        CellStyle integer = workbook.createCellStyle();
+        integer.setAlignment(HorizontalAlignment.RIGHT);
+        integer.setDataFormat(workbook.createDataFormat().getFormat("#,##0"));
+
+        CellStyle note = workbook.createCellStyle();
+        note.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        note.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        note.setAlignment(HorizontalAlignment.CENTER);
+        Font noteFont = workbook.createFont();
+        noteFont.setItalic(true);
+        note.setFont(noteFont);
+
+        return new WorkbookStyles(title, meta, section, header, text, date, weight, quality, integer, note);
     }
 
-    private record DailyAggregate(LocalDate date, double weightKg, double fatPercent, double proteinPercent) {
+    private record Aggregate(long recordsCount, double weightKg, double fatPercent, double proteinPercent) {
+    }
+
+    private record WorkbookStyles(
+            CellStyle title,
+            CellStyle meta,
+            CellStyle section,
+            CellStyle header,
+            CellStyle text,
+            CellStyle date,
+            CellStyle weight,
+            CellStyle quality,
+            CellStyle integer,
+            CellStyle note
+    ) {
     }
 }

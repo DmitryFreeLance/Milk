@@ -3,6 +3,9 @@ package ru.milk.maxbot.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import ru.milk.maxbot.config.AppConfig;
 import ru.milk.maxbot.db.Database;
 import ru.milk.maxbot.domain.BotUser;
@@ -11,6 +14,8 @@ import ru.milk.maxbot.domain.MilkReceipt;
 import ru.milk.maxbot.domain.ReceivingPoint;
 import ru.milk.maxbot.repository.BotRepository;
 
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -113,13 +118,68 @@ class ReportServiceTest {
         assertTrue(reportService.buildDetailedDailyReport(correctedDate).contains("Березники"));
     }
 
+    @Test
+    void excelPointReportContainsReceiptsAndSummariesByDayAndFarm() throws Exception {
+        createReceipt(berezniki, date.minusDays(1), 1_000, 3.20, 3.00);
+        createReceipt(berezniki, date, 3_567, 3.50, 3.10);
+        createReceipt(berezniki, date, 3_789, 3.30, 3.10);
+        Farm yazykovo = repository.listFarms(true).stream()
+                .filter(item -> item.name().equals("Языково"))
+                .findFirst()
+                .orElseThrow();
+        createReceipt(yazykovo, date, 500, 3.60, 3.20);
+
+        ReceivingPoint otherPoint = repository.listPoints().stream()
+                .filter(item -> item.id() != point.id())
+                .findFirst()
+                .orElseThrow();
+        repository.createReceipt(
+                admin.id(), otherPoint.id(), berezniki.id(), "Без секции", date,
+                9_999, 4.00, 4.00, 9_999,
+                null, null, null, null, "MISSING", null, null
+        );
+
+        Path report = reportService.buildExcelPointReport(point.id(), date.minusDays(1), date);
+
+        try (InputStream input = Files.newInputStream(report);
+             XSSFWorkbook workbook = new XSSFWorkbook(input)) {
+            assertEquals(2, workbook.getNumberOfSheets());
+            XSSFSheet intake = workbook.getSheet("Приёмки");
+            XSSFSheet summary = workbook.getSheet("Сводка");
+
+            assertEquals("Дата", intake.getRow(3).getCell(0).getStringCellValue());
+            assertEquals("Колхоз", intake.getRow(3).getCell(1).getStringCellValue());
+            assertEquals(4, intake.getLastRowNum() - 3);
+            assertEquals(1_000, intake.getRow(4).getCell(2).getNumericCellValue(), 0.001);
+            assertEquals("27.07.2026", intake.getRow(4).getCell(0).getStringCellValue());
+
+            RowValues total = aggregateRow(summary, "Итого за период", 2);
+            assertEquals(4, total.records());
+            assertEquals(8_856, total.weight(), 0.001);
+
+            RowValues bereznikiTotal = findAggregateRow(summary, "Березники");
+            assertEquals(3, bereznikiTotal.records());
+            assertEquals(8_356, bereznikiTotal.weight(), 0.001);
+            assertEquals((1_000 * 3.20 + 3_567 * 3.50 + 3_789 * 3.30) / 8_356,
+                    bereznikiTotal.fat(), 0.0001);
+
+            RowValues yazykovoTotal = findAggregateRow(summary, "Языково");
+            assertEquals(1, yazykovoTotal.records());
+            assertEquals(500, yazykovoTotal.weight(), 0.001);
+        }
+    }
+
     private MilkReceipt createReceipt(Farm farm, double weight, double fat, double protein) {
+        return createReceipt(farm, date, weight, fat, protein);
+    }
+
+    private MilkReceipt createReceipt(Farm farm, LocalDate deliveryDate, double weight, double fat, double protein) {
         return repository.createReceipt(
                 admin.id(),
                 point.id(),
                 farm.id(),
                 "Без секции",
-                date,
+                deliveryDate,
                 weight,
                 fat,
                 protein,
@@ -132,5 +192,41 @@ class ReportServiceTest {
                 null,
                 null
         );
+    }
+
+    private RowValues aggregateRow(XSSFSheet sheet, String sectionTitle, int valueRowOffset) {
+        for (int rowIndex = 0; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+            if (sheet.getRow(rowIndex) != null
+                    && sheet.getRow(rowIndex).getCell(0) != null
+                    && sheet.getRow(rowIndex).getCell(0).getCellType() == CellType.STRING
+                    && sectionTitle.equals(sheet.getRow(rowIndex).getCell(0).getStringCellValue())) {
+                return valuesFromRow(sheet, rowIndex + valueRowOffset, 0);
+            }
+        }
+        throw new AssertionError("Section not found: " + sectionTitle);
+    }
+
+    private RowValues findAggregateRow(XSSFSheet sheet, String label) {
+        for (int rowIndex = 0; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+            if (sheet.getRow(rowIndex) != null
+                    && sheet.getRow(rowIndex).getCell(0) != null
+                    && sheet.getRow(rowIndex).getCell(0).getCellType() == CellType.STRING
+                    && label.equals(sheet.getRow(rowIndex).getCell(0).getStringCellValue())) {
+                return valuesFromRow(sheet, rowIndex, 1);
+            }
+        }
+        throw new AssertionError("Aggregate row not found: " + label);
+    }
+
+    private RowValues valuesFromRow(XSSFSheet sheet, int rowIndex, int startColumn) {
+        return new RowValues(
+                (long) sheet.getRow(rowIndex).getCell(startColumn).getNumericCellValue(),
+                sheet.getRow(rowIndex).getCell(startColumn + 1).getNumericCellValue(),
+                sheet.getRow(rowIndex).getCell(startColumn + 2).getNumericCellValue(),
+                sheet.getRow(rowIndex).getCell(startColumn + 3).getNumericCellValue()
+        );
+    }
+
+    private record RowValues(long records, double weight, double fat, double protein) {
     }
 }
