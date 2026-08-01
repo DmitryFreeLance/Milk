@@ -169,6 +169,47 @@ class ReportServiceTest {
         }
     }
 
+    @Test
+    void excelFarmReportContainsFarmReceiptsFromAllPointsAndCharts() throws Exception {
+        createReceipt(berezniki, date, 1_000, 3.20, 3.00);
+        ReceivingPoint otherPoint = repository.listPoints().stream()
+                .filter(item -> item.id() != point.id())
+                .findFirst()
+                .orElseThrow();
+        repository.createReceipt(
+                admin.id(), otherPoint.id(), berezniki.id(), "Без секции", date,
+                2_000, 3.40, 3.10, 2_000,
+                null, null, null, null, "MISSING", null, null
+        );
+        Farm yazykovo = repository.listFarms(true).stream()
+                .filter(item -> item.name().equals("Языково"))
+                .findFirst()
+                .orElseThrow();
+        createReceipt(yazykovo, date, 9_999, 4.00, 4.00);
+
+        Path report = reportService.buildExcelFarmReport(berezniki.id(), date, date);
+
+        try (InputStream input = Files.newInputStream(report);
+             XSSFWorkbook workbook = new XSSFWorkbook(input)) {
+            assertEquals(3, workbook.getNumberOfSheets());
+            XSSFSheet data = workbook.getSheet("Данные");
+            XSSFSheet summary = workbook.getSheet("Общие данные");
+            XSSFSheet charts = workbook.getSheet("Графики");
+
+            assertEquals(2, data.getLastRowNum() - 3);
+            assertEquals("Пункт", data.getRow(3).getCell(1).getStringCellValue());
+            assertTrue(data.getRow(4).getCell(1).getStringCellValue().equals(point.name())
+                    || data.getRow(5).getCell(1).getStringCellValue().equals(point.name()));
+            assertTrue(data.getRow(4).getCell(1).getStringCellValue().equals(otherPoint.name())
+                    || data.getRow(5).getCell(1).getStringCellValue().equals(otherPoint.name()));
+
+            assertEquals(1, summary.getLastRowNum() - 3);
+            assertEquals(2, summary.getRow(4).getCell(1).getNumericCellValue(), 0.001);
+            assertEquals(3_000, summary.getRow(4).getCell(2).getNumericCellValue(), 0.001);
+            assertEquals(3, charts.getDrawingPatriarch().getCharts().size());
+        }
+    }
+
     private MilkReceipt createReceipt(Farm farm, double weight, double fat, double protein) {
         return createReceipt(farm, date, weight, fat, protein);
     }

@@ -152,6 +152,12 @@ public class ReportService {
         return excelReportService.buildPointPeriodReport(point, start, end, receipts);
     }
 
+    public Path buildExcelFarmReport(long farmId, LocalDate start, LocalDate end) {
+        Farm farm = repository.findFarm(farmId).orElseThrow();
+        List<MilkReceipt> receipts = repository.listReceipts(start, end, null, farmId, false);
+        return excelReportService.buildFarmPeriodReport(farm, start, end, receipts);
+    }
+
     private String summaryBlock(StatsSummary summary) {
         return """
                 Записей: *%d*
