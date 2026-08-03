@@ -119,13 +119,13 @@ class ReportServiceTest {
     }
 
     @Test
-    void dailyDigestHighlightsPointsAndShowsReceivingEmployeeSurname() {
+    void dailyDigestHighlightsPointsAndShowsReceivingEmployeeName() {
         createReceipt(berezniki, 3_000, 3.40, 3.10);
 
         String report = reportService.buildDailyDigest(date);
 
-        assertTrue(report.contains("По пунктам:\n\n• *Б"));
-        assertTrue(report.contains("3000.0 кг\n\n  Сотрудник на приёмке: Админ\n\n  • Березники"));
+        assertTrue(report.contains("По пунктам:\n\n• *Большая Арать* — "));
+        assertTrue(report.contains("3000.0 кг\n\n  Сотрудник на приёмке: Тест Админ\n\n  • Березники"));
     }
 
     @Test
