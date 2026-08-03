@@ -97,6 +97,7 @@ public class BotService {
         String text = reportService.buildDailyDigest(date);
         sendToUser(user.maxUserId(), text, listOf(
                 Keyboards.callback("📊 Подробный отчёт", "digest:details:" + date),
+                Keyboards.callback("📅 Другая дата", "digest:today"),
                 Keyboards.callback("🏠 Главное меню", "nav:home")
         ));
     }
@@ -291,6 +292,10 @@ public class BotService {
             sendDetailedDigest(user, payload.substring("digest:details:".length()));
             return;
         }
+        if (payload.startsWith("digest:date:")) {
+            onDailyDigestDateChoice(user, payload.substring("digest:date:".length()));
+            return;
+        }
 
         sendToUser(user.maxUserId(), "Команда не распознана. Открываю главное меню, чтобы мы не застряли.", homeButtons(user));
     }
@@ -331,6 +336,7 @@ public class BotService {
                 case "ADMIN_USER_EDIT_INPUT" -> onAdminUserEditInput(user, text);
                 case "EDIT_FIELD_INPUT" -> onReceiptFieldEditInput(user, text);
                 case "EDIT_PHOTO_INPUT" -> onReceiptPhotoEditInput(user, attachments);
+                case "DIGEST_CUSTOM_DATE" -> onCustomDigestDate(user, text);
                 default -> onIdleMessage(user, text);
             }
         } catch (Exception e) {
@@ -1721,7 +1727,59 @@ public class BotService {
             sendToUser(user.maxUserId(), "Сводка за день доступна только руководящим ролям.", homeButtons(user));
             return;
         }
-        sendDailyDigestToUser(user, LocalDate.now(zoneId));
+        sendDailyDigestDateMenu(user);
+    }
+
+    private void sendDailyDigestDateMenu(BotUser user) {
+        sendToUser(user.maxUserId(), """
+                📊 *Сводка за день*
+
+                Выберите дату: сегодня, вчера или введите нужную вручную.
+                """, listOf(
+                Keyboards.callback("📅 Сегодня", "digest:date:today"),
+                Keyboards.callback("📆 Вчера", "digest:date:yesterday"),
+                Keyboards.callback("⌨️ Ввести дату", "digest:date:custom"),
+                Keyboards.callback("🏠 Главное меню", "nav:home")
+        ));
+    }
+
+    private void onDailyDigestDateChoice(BotUser user, String value) {
+        if (!user.role().canViewReports()) {
+            sendToUser(user.maxUserId(), "Сводка за день доступна только руководящим ролям.", homeButtons(user));
+            return;
+        }
+        if ("custom".equals(value)) {
+            repository.saveSession(user.maxUserId(), "DIGEST_CUSTOM_DATE", Jsons.object());
+            sendToUser(user.maxUserId(), "Введите дату сводки в формате `дд.ММ.гггг`.", listOf(Keyboards.callback("🏠 В меню", "nav:home")));
+            return;
+        }
+        LocalDate date = switch (value) {
+            case "today" -> LocalDate.now(zoneId);
+            case "yesterday" -> LocalDate.now(zoneId).minusDays(1);
+            default -> {
+                try {
+                    yield LocalDate.parse(value);
+                } catch (Exception e) {
+                    yield null;
+                }
+            }
+        };
+        if (date == null) {
+            sendToUser(user.maxUserId(), "Не удалось определить дату сводки. Показываю главное меню.", homeButtons(user));
+            return;
+        }
+        clearSession(user);
+        sendDailyDigestToUser(user, date);
+    }
+
+    private void onCustomDigestDate(BotUser user, String text) {
+        LocalDate date = parseDate(text);
+        if (date == null) {
+            sendToUser(user.maxUserId(), "Дата не распознана. Нужен формат `дд.ММ.гггг`.", listOf(Keyboards.callback("🏠 В меню", "nav:home")));
+            return;
+        }
+        clearSession(user);
+        sendDailyDigestToUser(user, date);
     }
 
     private void sendDetailedDigest(BotUser user, String dateRaw) {
@@ -1920,7 +1978,7 @@ public class BotService {
 
     private ArrayNode directorButtons() {
         return Keyboards.inline(listOf(
-                Keyboards.callback("📊 Сводка за сегодня", "digest:today"),
+                Keyboards.callback("📊 Сводка за день", "digest:today"),
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
@@ -1936,7 +1994,7 @@ public class BotService {
                 Keyboards.callback("🌾 Колхозы", "admin:farms"),
                 Keyboards.callback("➕ Добавить приёмку", "admin:receipt:new"),
                 Keyboards.callback("✏️ Записи", "admin:records"),
-                Keyboards.callback("📊 Сводка за сегодня", "digest:today"),
+                Keyboards.callback("📊 Сводка за день", "digest:today"),
                 Keyboards.callback("🔎 Колхоз за день", "report:farmday:start"),
                 Keyboards.callback("🏭 Сводка по пункту", "report:point:start"),
                 Keyboards.callback("🌍 Сводка по всем пунктам", "report:global:start"),
@@ -1949,9 +2007,7 @@ public class BotService {
         if (attachments == null) {
             clearButtonActions(maxUserId);
         }
-        OutgoingMessage message = containsInlineKeyboard(attachments)
-                ? OutgoingMessage.plain(stripMarkdown(text), attachments)
-                : OutgoingMessage.markdown(text, attachments);
+        OutgoingMessage message = OutgoingMessage.markdown(text, attachments);
         maxApiClient.sendToUser(maxUserId, message);
     }
 
@@ -2278,7 +2334,7 @@ public class BotService {
             case "🏭 Сводка по пункту" -> "report:point:start";
             case "🌍 Сводка по всем пунктам" -> "report:global:start";
             case "📈 Excel и графики", "📈 Excel по пункту", "📈 Excel-отчёты" -> "report:excel:start";
-            case "📊 Сводка за сегодня" -> "digest:today";
+            case "📊 Сводка за сегодня", "📊 Сводка за день" -> "digest:today";
             case "📬 Вкл/выкл сводку смены" -> "digest:toggle";
             case "👥 Заявки на доступ" -> "admin:requests";
             case "🧑‍💼 Пользователи" -> "admin:users";

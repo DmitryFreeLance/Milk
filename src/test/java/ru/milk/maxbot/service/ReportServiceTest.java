@@ -119,6 +119,16 @@ class ReportServiceTest {
     }
 
     @Test
+    void dailyDigestHighlightsPointsAndShowsReceivingEmployeeSurname() {
+        createReceipt(berezniki, 3_000, 3.40, 3.10);
+
+        String report = reportService.buildDailyDigest(date);
+
+        assertTrue(report.contains("По пунктам:\n\n• *Б"));
+        assertTrue(report.contains("3000.0 кг\n\n  Сотрудник на приёмке: Админ\n\n  • Березники"));
+    }
+
+    @Test
     void excelPointReportContainsReceiptsAndSummariesByDayAndFarm() throws Exception {
         createReceipt(berezniki, date.minusDays(1), 1_000, 3.20, 3.00);
         createReceipt(berezniki, date, 3_567, 3.50, 3.10);
@@ -198,14 +208,18 @@ class ReportServiceTest {
 
             assertEquals(2, data.getLastRowNum() - 3);
             assertEquals("Пункт", data.getRow(3).getCell(1).getStringCellValue());
+            assertEquals("Секция", data.getRow(3).getCell(2).getStringCellValue());
             assertTrue(data.getRow(4).getCell(1).getStringCellValue().equals(point.name())
                     || data.getRow(5).getCell(1).getStringCellValue().equals(point.name()));
             assertTrue(data.getRow(4).getCell(1).getStringCellValue().equals(otherPoint.name())
                     || data.getRow(5).getCell(1).getStringCellValue().equals(otherPoint.name()));
 
-            assertEquals(1, summary.getLastRowNum() - 3);
             assertEquals(2, summary.getRow(4).getCell(1).getNumericCellValue(), 0.001);
             assertEquals(3_000, summary.getRow(4).getCell(2).getNumericCellValue(), 0.001);
+            RowValues periodTotal = aggregateRow(summary, "Итого за период", 2, 1);
+            assertEquals(2, periodTotal.records());
+            assertEquals(3_000, periodTotal.weight(), 0.001);
+            assertEquals((1_000 * 3.20 + 2_000 * 3.40) / 3_000, periodTotal.fat(), 0.0001);
             assertEquals(3, charts.getDrawingPatriarch().getCharts().size());
         }
     }
@@ -236,12 +250,16 @@ class ReportServiceTest {
     }
 
     private RowValues aggregateRow(XSSFSheet sheet, String sectionTitle, int valueRowOffset) {
+        return aggregateRow(sheet, sectionTitle, valueRowOffset, 0);
+    }
+
+    private RowValues aggregateRow(XSSFSheet sheet, String sectionTitle, int valueRowOffset, int startColumn) {
         for (int rowIndex = 0; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
             if (sheet.getRow(rowIndex) != null
                     && sheet.getRow(rowIndex).getCell(0) != null
                     && sheet.getRow(rowIndex).getCell(0).getCellType() == CellType.STRING
                     && sectionTitle.equals(sheet.getRow(rowIndex).getCell(0).getStringCellValue())) {
-                return valuesFromRow(sheet, rowIndex + valueRowOffset, 0);
+                return valuesFromRow(sheet, rowIndex + valueRowOffset, startColumn);
             }
         }
         throw new AssertionError("Section not found: " + sectionTitle);

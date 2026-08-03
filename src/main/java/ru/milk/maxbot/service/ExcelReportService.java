@@ -102,14 +102,14 @@ public class ExcelReportService {
                                     LocalDate end,
                                     List<MilkReceipt> receipts,
                                     WorkbookStyles styles) {
-        int columns = 8;
+        int columns = 9;
         configureSheet(sheet);
         writeTitle(sheet, "Приёмки колхоза: " + farm.name(), columns, styles);
         writePeriod(sheet, start, end, columns, styles);
 
         Row header = sheet.createRow(3);
         writeHeaders(header, List.of(
-                "Дата", "Пункт", "Вес, кг", "Жир, %", "Белок, %", "Принял", "Статус фото", "Номер записи"
+                "Дата", "Пункт", "Секция", "Вес, кг", "Жир, %", "Белок, %", "Принял", "Статус фото", "Номер записи"
         ), styles.header());
 
         int rowIndex = 4;
@@ -119,18 +119,20 @@ public class ExcelReportService {
             row.getCell(0).setCellStyle(styles.date());
             row.createCell(1).setCellValue(receipt.pointName());
             row.getCell(1).setCellStyle(styles.text());
-            row.createCell(2).setCellValue(receipt.weightKg());
-            row.getCell(2).setCellStyle(styles.weight());
-            row.createCell(3).setCellValue(receipt.fatPercent());
-            row.getCell(3).setCellStyle(styles.quality());
-            row.createCell(4).setCellValue(receipt.proteinPercent());
+            row.createCell(2).setCellValue(receipt.sectionLabel());
+            row.getCell(2).setCellStyle(styles.text());
+            row.createCell(3).setCellValue(receipt.weightKg());
+            row.getCell(3).setCellStyle(styles.weight());
+            row.createCell(4).setCellValue(receipt.fatPercent());
             row.getCell(4).setCellStyle(styles.quality());
-            row.createCell(5).setCellValue(receipt.createdByName());
-            row.getCell(5).setCellStyle(styles.text());
-            row.createCell(6).setCellValue(receipt.photoStatus());
+            row.createCell(5).setCellValue(receipt.proteinPercent());
+            row.getCell(5).setCellStyle(styles.quality());
+            row.createCell(6).setCellValue(receipt.createdByName());
             row.getCell(6).setCellStyle(styles.text());
-            row.createCell(7).setCellValue(receipt.publicId());
+            row.createCell(7).setCellValue(receipt.photoStatus());
             row.getCell(7).setCellStyle(styles.text());
+            row.createCell(8).setCellValue(receipt.publicId());
+            row.getCell(8).setCellStyle(styles.text());
         }
 
         if (receipts.isEmpty()) {
@@ -143,7 +145,7 @@ public class ExcelReportService {
         }
 
         sheet.createFreezePane(0, 4);
-        int[] widths = {14, 24, 16, 14, 14, 24, 18, 20};
+        int[] widths = {14, 24, 18, 16, 14, 14, 24, 18, 20};
         for (int index = 0; index < widths.length; index++) {
             sheet.setColumnWidth(index, widths[index] * 256);
         }
@@ -175,6 +177,15 @@ public class ExcelReportService {
             empty.createCell(0).setCellValue("За выбранный период данных нет");
             empty.getCell(0).setCellStyle(styles.note());
             sheet.addMergedRegion(new CellRangeAddress(rowIndex, rowIndex, 0, INTAKE_COLUMNS - 1));
+        } else {
+            rowIndex++;
+            writeSectionTitle(sheet, rowIndex++, "Итого за период", styles);
+            Row totalHeader = sheet.createRow(rowIndex++);
+            writeHeaders(totalHeader, List.of("Период", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
+            Row totalRow = sheet.createRow(rowIndex);
+            totalRow.createCell(0).setCellValue(Dates.formatDate(start) + " - " + Dates.formatDate(end));
+            totalRow.getCell(0).setCellStyle(styles.date());
+            writeAggregateCells(totalRow, 1, aggregate(receipts), styles);
         }
 
         sheet.createFreezePane(0, 4);

@@ -11,7 +11,9 @@ import ru.milk.maxbot.util.Numbers;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 public class ReportService {
     private final BotRepository repository;
@@ -183,8 +185,12 @@ public class ReportService {
         }
 
         for (NamedSummary point : points) {
-            text.append("• ").append(point.name()).append(" — ")
+            List<MilkReceipt> pointReceipts = repository.listReceipts(date, date, point.id(), null, false);
+            text.append("\n• *").append(underlined(point.name())).append("* — ")
                     .append(Numbers.oneDecimal(point.summary().totalWeightKg())).append(" кг\n\n");
+            text.append("  Сотрудник на приёмке: ")
+                    .append(formatEmployeeSurnames(pointReceipts))
+                    .append("\n\n");
 
             repository.summarizeByFarm(date, date, point.id()).stream()
                     .filter(farm -> farm.summary().recordsCount() > 0)
@@ -193,6 +199,40 @@ public class ReportService {
         }
 
         return text.toString().stripTrailing();
+    }
+
+    private String formatEmployeeSurnames(List<MilkReceipt> receipts) {
+        Set<String> surnames = new LinkedHashSet<>();
+        for (MilkReceipt receipt : receipts) {
+            String surname = extractSurname(receipt.createdByName());
+            if (surname != null && !surname.isBlank()) {
+                surnames.add(surname);
+            }
+        }
+        return surnames.isEmpty() ? "не указан" : String.join(", ", surnames);
+    }
+
+    private String extractSurname(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return null;
+        }
+        String trimmed = displayName.trim();
+        if (trimmed.startsWith("@")) {
+            return trimmed;
+        }
+        String[] parts = trimmed.split("\\s+");
+        return parts.length == 0 ? trimmed : parts[parts.length - 1];
+    }
+
+    private String underlined(String value) {
+        StringBuilder result = new StringBuilder();
+        value.codePoints().forEach(codePoint -> {
+            result.appendCodePoint(codePoint);
+            if (!Character.isWhitespace(codePoint)) {
+                result.append('\u0332');
+            }
+        });
+        return result.toString();
     }
 
     private String formatSummaryDetails(StatsSummary summary) {
