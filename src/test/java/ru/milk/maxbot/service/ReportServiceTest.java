@@ -174,6 +174,9 @@ class ReportServiceTest {
             assertEquals(4, total.records());
             assertEquals(8_856, total.weight(), 0.001);
 
+            assertEquals("Приняла", summary.getRow(9).getCell(5).getStringCellValue());
+            assertEquals("Тест Админ", stringCellInRow(summary, "28.07.2026", 5));
+
             RowValues bereznikiTotal = findAggregateRow(summary, "Березники");
             assertEquals(3, bereznikiTotal.records());
             assertEquals(8_356, bereznikiTotal.weight(), 0.001);
@@ -282,6 +285,18 @@ class ReportServiceTest {
             }
         }
         throw new AssertionError("Aggregate row not found: " + label);
+    }
+
+    private String stringCellInRow(XSSFSheet sheet, String rowLabel, int column) {
+        for (int rowIndex = 0; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+            if (sheet.getRow(rowIndex) != null
+                    && sheet.getRow(rowIndex).getCell(0) != null
+                    && sheet.getRow(rowIndex).getCell(0).getCellType() == CellType.STRING
+                    && rowLabel.equals(sheet.getRow(rowIndex).getCell(0).getStringCellValue())) {
+                return sheet.getRow(rowIndex).getCell(column).getStringCellValue();
+            }
+        }
+        throw new AssertionError("Row not found: " + rowLabel);
     }
 
     private RowValues valuesFromRow(XSSFSheet sheet, int rowIndex, int startColumn) {

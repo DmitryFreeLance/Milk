@@ -36,12 +36,15 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 public class ExcelReportService {
     private static final int INTAKE_COLUMNS = 5;
+    private static final int POINT_SUMMARY_COLUMNS = 6;
 
     public Path buildPointPeriodReport(ReceivingPoint point,
                                        LocalDate start,
@@ -328,28 +331,31 @@ public class ExcelReportService {
                                    List<MilkReceipt> receipts,
                                    WorkbookStyles styles) {
         configureSheet(sheet);
-        writeTitle(sheet, "Сводка по пункту: " + point.name(), styles);
-        writePeriod(sheet, start, end, styles);
+        writeTitle(sheet, "Сводка по пункту: " + point.name(), POINT_SUMMARY_COLUMNS, styles);
+        writePeriod(sheet, start, end, POINT_SUMMARY_COLUMNS, styles);
 
         Aggregate total = aggregate(receipts);
-        writeSectionTitle(sheet, 3, "Итого за период", styles);
+        writeSectionTitle(sheet, 3, "Итого за период", POINT_SUMMARY_COLUMNS, styles);
         Row totalHeader = sheet.createRow(4);
         writeHeaders(totalHeader, List.of("Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
         writeAggregateRow(sheet.createRow(5), total, styles);
 
         int rowIndex = 8;
-        writeSectionTitle(sheet, rowIndex++, "Суммарно по дням", styles);
+        writeSectionTitle(sheet, rowIndex++, "Суммарно по дням", POINT_SUMMARY_COLUMNS, styles);
         Row dailyHeader = sheet.createRow(rowIndex++);
-        writeHeaders(dailyHeader, List.of("Дата", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
+        writeHeaders(dailyHeader, List.of("Дата", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %", "Приняла"), styles.header());
+        Map<LocalDate, String> employeesByDay = employeeNamesByDay(receipts);
         for (Map.Entry<LocalDate, Aggregate> entry : aggregateByDay(receipts).entrySet()) {
             Row row = sheet.createRow(rowIndex++);
             row.createCell(0).setCellValue(Dates.formatDate(entry.getKey()));
             row.getCell(0).setCellStyle(styles.date());
             writeAggregateCells(row, 1, entry.getValue(), styles);
+            row.createCell(5).setCellValue(employeesByDay.getOrDefault(entry.getKey(), ""));
+            row.getCell(5).setCellStyle(styles.text());
         }
 
         rowIndex++;
-        writeSectionTitle(sheet, rowIndex++, "Суммарно по колхозам", styles);
+        writeSectionTitle(sheet, rowIndex++, "Суммарно по колхозам", POINT_SUMMARY_COLUMNS, styles);
         Row farmHeader = sheet.createRow(rowIndex++);
         writeHeaders(farmHeader, List.of("Колхоз", "Приёмок", "Вес, кг", "Средний жир, %", "Средний белок, %"), styles.header());
         for (Map.Entry<String, Aggregate> entry : aggregateByFarm(receipts).entrySet()) {
@@ -365,6 +371,7 @@ public class ExcelReportService {
         sheet.setColumnWidth(2, 16 * 256);
         sheet.setColumnWidth(3, 20 * 256);
         sheet.setColumnWidth(4, 22 * 256);
+        sheet.setColumnWidth(5, 28 * 256);
     }
 
     private void writeTitle(XSSFSheet sheet, String title, WorkbookStyles styles) {
@@ -391,11 +398,15 @@ public class ExcelReportService {
     }
 
     private void writeSectionTitle(XSSFSheet sheet, int rowIndex, String title, WorkbookStyles styles) {
+        writeSectionTitle(sheet, rowIndex, title, INTAKE_COLUMNS, styles);
+    }
+
+    private void writeSectionTitle(XSSFSheet sheet, int rowIndex, String title, int columns, WorkbookStyles styles) {
         Row row = sheet.createRow(rowIndex);
         row.setHeightInPoints(22);
         row.createCell(0).setCellValue(title);
         row.getCell(0).setCellStyle(styles.section());
-        sheet.addMergedRegion(new CellRangeAddress(rowIndex, rowIndex, 0, INTAKE_COLUMNS - 1));
+        sheet.addMergedRegion(new CellRangeAddress(rowIndex, rowIndex, 0, columns - 1));
     }
 
     private void writeHeaders(Row row, List<String> labels, CellStyle style) {
@@ -434,6 +445,19 @@ public class ExcelReportService {
         receipts.forEach(receipt -> grouped.computeIfAbsent(receipt.farmName(), ignored -> new ArrayList<>()).add(receipt));
         Map<String, Aggregate> result = new LinkedHashMap<>();
         grouped.forEach((farm, rows) -> result.put(farm, aggregate(rows)));
+        return result;
+    }
+
+    private Map<LocalDate, String> employeeNamesByDay(List<MilkReceipt> receipts) {
+        Map<LocalDate, Set<String>> grouped = new TreeMap<>();
+        receipts.forEach(receipt -> {
+            String name = receipt.createdByName();
+            if (name != null && !name.isBlank()) {
+                grouped.computeIfAbsent(receipt.deliveryDate(), ignored -> new LinkedHashSet<>()).add(name.trim());
+            }
+        });
+        Map<LocalDate, String> result = new LinkedHashMap<>();
+        grouped.forEach((date, names) -> result.put(date, String.join(", ", names)));
         return result;
     }
 
