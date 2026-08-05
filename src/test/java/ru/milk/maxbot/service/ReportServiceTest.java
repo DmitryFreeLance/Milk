@@ -48,7 +48,14 @@ class ReportServiceTest {
                 25,
                 LocalTime.of(20, 0),
                 true,
-                Set.of(1001L)
+                Set.of(1001L),
+                "",
+                587,
+                "",
+                "",
+                "",
+                true,
+                false
         );
         Database database = new Database(config);
         database.init();

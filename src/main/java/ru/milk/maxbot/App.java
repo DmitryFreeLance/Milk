@@ -8,6 +8,7 @@ import ru.milk.maxbot.db.Database;
 import ru.milk.maxbot.max.MaxApiClient;
 import ru.milk.maxbot.repository.BotRepository;
 import ru.milk.maxbot.service.BotService;
+import ru.milk.maxbot.service.EmailService;
 import ru.milk.maxbot.service.ExcelReportService;
 import ru.milk.maxbot.service.PhotoService;
 import ru.milk.maxbot.service.ReportService;
@@ -33,7 +34,8 @@ public class App {
         PhotoService photoService = new PhotoService(config, maxApiClient);
         ExcelReportService excelReportService = new ExcelReportService();
         ReportService reportService = new ReportService(repository, excelReportService);
-        BotService botService = new BotService(config, repository, maxApiClient, photoService, reportService);
+        EmailService emailService = new EmailService(config);
+        BotService botService = new BotService(config, repository, maxApiClient, photoService, reportService, emailService);
         SchedulerService schedulerService = new SchedulerService(config, repository, botService);
         schedulerService.start();
 

@@ -12,6 +12,7 @@ import ru.milk.maxbot.domain.Farm;
 import ru.milk.maxbot.domain.MilkReceipt;
 import ru.milk.maxbot.domain.PendingRegistration;
 import ru.milk.maxbot.domain.ReceivingPoint;
+import ru.milk.maxbot.domain.ReportEmail;
 import ru.milk.maxbot.domain.UserRole;
 import ru.milk.maxbot.max.MaxApiClient;
 import ru.milk.maxbot.max.OutgoingMessage;
@@ -23,6 +24,7 @@ import ru.milk.maxbot.util.Keyboards;
 import ru.milk.maxbot.util.Numbers;
 import ru.milk.maxbot.util.Texts;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -36,6 +38,7 @@ import java.util.regex.Pattern;
 public class BotService {
     private static final Logger log = LoggerFactory.getLogger(BotService.class);
     private static final Pattern PHONE_PATTERN = Pattern.compile("TEL[^:]*:([+\\d]+)");
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private static final int USERS_PAGE_SIZE = 10;
     private static final int RECEIPTS_PAGE_SIZE = 8;
     private static final int RECORDS_PAGE_SIZE = 8;
@@ -46,18 +49,21 @@ public class BotService {
     private final MaxApiClient maxApiClient;
     private final PhotoService photoService;
     private final ReportService reportService;
+    private final EmailService emailService;
     private final ZoneId zoneId;
 
     public BotService(AppConfig config,
                       BotRepository repository,
                       MaxApiClient maxApiClient,
                       PhotoService photoService,
-                      ReportService reportService) {
+                      ReportService reportService,
+                      EmailService emailService) {
         this.config = config;
         this.repository = repository;
         this.maxApiClient = maxApiClient;
         this.photoService = photoService;
         this.reportService = reportService;
+        this.emailService = emailService;
         this.zoneId = config.zoneId();
     }
 
@@ -162,6 +168,8 @@ public class BotService {
             case "admin:users" -> showUsersAdmin(user);
             case "admin:farms" -> showFarmAdmin(user);
             case "admin:farm:add" -> askNewFarmName(user);
+            case "admin:emails" -> showEmailAdmin(user);
+            case "admin:email:add" -> askNewReportEmail(user);
             case "admin:records" -> showAdminRecordDateMenu(user);
             case "report:farmday:start" -> startFarmDayReport(user);
             case "report:point:start" -> startPointReport(user);
@@ -244,6 +252,10 @@ public class BotService {
             toggleFarmActive(user, parseLong(payload.substring("admin:farm:toggle:".length())));
             return;
         }
+        if (payload.startsWith("admin:email:delete:")) {
+            deleteReportEmail(user, parseLong(payload.substring("admin:email:delete:".length())));
+            return;
+        }
         if (payload.startsWith("admin:records:date:")) {
             showAdminRecordsForDate(user, payload.substring("admin:records:date:".length()));
             return;
@@ -286,6 +298,14 @@ public class BotService {
         }
         if (payload.startsWith("report:period:")) {
             onPeriodChoice(user, payload.substring("report:period:".length()));
+            return;
+        }
+        if (payload.startsWith("excel:email:send:")) {
+            sendLastExcelReportByEmail(user, parseLong(payload.substring("excel:email:send:".length())));
+            return;
+        }
+        if (payload.equals("excel:email:choose")) {
+            showExcelEmailChooser(user);
             return;
         }
         if (payload.startsWith("digest:details:")) {
@@ -332,6 +352,7 @@ public class BotService {
                 case "REPORT_CUSTOM_START" -> onCustomStartDate(user, text);
                 case "REPORT_CUSTOM_END" -> onCustomEndDate(user, text);
                 case "ADMIN_ADD_FARM" -> onNewFarmName(user, text);
+                case "ADMIN_EMAIL_ADD" -> onNewReportEmail(user, text);
                 case "ADMIN_RECORD_DATE" -> onAdminRecordDate(user, text);
                 case "ADMIN_USER_EDIT_INPUT" -> onAdminUserEditInput(user, text);
                 case "EDIT_FIELD_INPUT" -> onReceiptFieldEditInput(user, text);
@@ -1376,6 +1397,77 @@ public class BotService {
         sendToUser(admin.maxUserId(), "✅ Статус колхоза обновлён.", adminButtons());
     }
 
+    private void showEmailAdmin(BotUser admin) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        List<ReportEmail> emails = repository.listReportEmails();
+        List<ObjectNode> buttons = new ArrayList<>();
+        for (ReportEmail email : emails) {
+            buttons.add(Keyboards.callback("🗑️ " + email.email(), "admin:email:delete:" + email.id()));
+        }
+        buttons.add(Keyboards.callback("➕ Добавить почту", "admin:email:add"));
+        buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
+
+        String listText = emails.isEmpty()
+                ? "Адреса ещё не добавлены."
+                : emails.stream()
+                .map(email -> "• `" + email.email() + "`")
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+
+        sendToUser(admin.maxUserId(), """
+                📧 *Почты для Excel-отчётов*
+
+                %s
+
+                Чтобы удалить адрес, нажмите на него в списке кнопок.
+                """.formatted(listText), buttons);
+    }
+
+    private void askNewReportEmail(BotUser admin) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        repository.saveSession(admin.maxUserId(), "ADMIN_EMAIL_ADD", Jsons.object());
+        sendToUser(admin.maxUserId(), """
+                ➕ *Новая почта*
+
+                Отправьте один email-адрес сообщением.
+                """, listOf(Keyboards.callback("🏠 Отменить и выйти", "nav:home")));
+    }
+
+    private void onNewReportEmail(BotUser admin, String text) {
+        if (!admin.role().isAdmin()) {
+            clearSession(admin);
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        String email = normalizeEmail(text);
+        if (email == null) {
+            sendToUser(admin.maxUserId(), "Email не распознан. Отправьте адрес в формате `name@example.ru`.", listOf(
+                    Keyboards.callback("🏠 В меню", "nav:home")
+            ));
+            return;
+        }
+        repository.addReportEmail(email);
+        clearSession(admin);
+        sendToUser(admin.maxUserId(), "✅ Почта добавлена.", (ArrayNode) null);
+        showEmailAdmin(admin);
+    }
+
+    private void deleteReportEmail(BotUser admin, long emailId) {
+        if (!admin.role().isAdmin()) {
+            sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
+            return;
+        }
+        repository.deleteReportEmail(emailId);
+        sendToUser(admin.maxUserId(), "✅ Почта удалена.", (ArrayNode) null);
+        showEmailAdmin(admin);
+    }
+
     private void showAdminRecordDateMenu(BotUser admin) {
         if (!admin.role().isAdmin()) {
             sendToUser(admin.maxUserId(), "Этот раздел доступен только администратору.", homeButtons(admin));
@@ -1662,7 +1754,9 @@ public class BotService {
             default -> end;
         };
         sendReportBySession(user, data, start, end);
-        clearSession(user);
+        if (!isExcelReportMode(data)) {
+            clearSession(user);
+        }
     }
 
     private void onCustomStartDate(BotUser user, String text) {
@@ -1695,7 +1789,9 @@ public class BotService {
             return;
         }
         sendReportBySession(user, data, start, end);
-        clearSession(user);
+        if (!isExcelReportMode(data)) {
+            clearSession(user);
+        }
     }
 
     private void sendReportBySession(BotUser user, ObjectNode data, LocalDate start, LocalDate end) {
@@ -1707,6 +1803,11 @@ public class BotService {
             case "EXCEL_FARM" -> sendExcelFarmReport(user, data.path("farm_id").asLong(), start, end);
             default -> sendToUser(user.maxUserId(), "Не удалось определить тип отчёта. Возвращаю в меню.", homeButtons(user));
         }
+    }
+
+    private boolean isExcelReportMode(ObjectNode data) {
+        String mode = data.path("report_mode").asText();
+        return "EXCEL_POINT".equals(mode) || "EXCEL_FARM".equals(mode);
     }
 
     private void sendFarmDayReport(BotUser user, long farmId, LocalDate date) {
@@ -1807,25 +1908,128 @@ public class BotService {
     private void sendExcelPointReport(BotUser user, long pointId, LocalDate start, LocalDate end) {
         Path file = reportService.buildExcelPointReport(pointId, start, end);
         JsonNode uploadPayload = maxApiClient.uploadLocalFile(file, "file");
-        List<ObjectNode> buttons = listOf(Keyboards.callback("🏠 Главное меню", "nav:home"));
+        String pointName = repository.findPoint(pointId).map(ReceivingPoint::name).orElse("пункт");
+        rememberLastExcelReport(user, file, safeReportFileName("excel-point-" + pointName, start, end), "Excel-отчёт по пункту: " + pointName);
+        List<ObjectNode> buttons = listOf(
+                Keyboards.callback("📧 Отправить на почту", "excel:email:choose"),
+                Keyboards.callback("🏠 Главное меню", "nav:home")
+        );
         rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), """
                 📈 *Excel-отчёт по пункту готов*
 
                 На первом листе находятся все приёмки, на втором — итоги по дням и по колхозам.
+                Этот файл можно отправить на почту кнопкой ниже.
                 """, Attachments.fileWithKeyboard(uploadPayload, Keyboards.inline(buttons)));
     }
 
     private void sendExcelFarmReport(BotUser user, long farmId, LocalDate start, LocalDate end) {
         Path file = reportService.buildExcelFarmReport(farmId, start, end);
         JsonNode uploadPayload = maxApiClient.uploadLocalFile(file, "file");
-        List<ObjectNode> buttons = listOf(Keyboards.callback("🏠 Главное меню", "nav:home"));
+        String farmName = repository.findFarm(farmId).map(Farm::name).orElse("колхоз");
+        rememberLastExcelReport(user, file, safeReportFileName("excel-farm-" + farmName, start, end), "Excel-отчёт по колхозу: " + farmName);
+        List<ObjectNode> buttons = listOf(
+                Keyboards.callback("📧 Отправить на почту", "excel:email:choose"),
+                Keyboards.callback("🏠 Главное меню", "nav:home")
+        );
         rememberButtonActions(user.maxUserId(), buttons);
         sendToUser(user.maxUserId(), """
                 📈 *Excel-отчёт по колхозу готов*
 
                 Внутри находятся все приёмки колхоза по пунктам, дневные итоги и графики за выбранный период.
+                Этот файл можно отправить на почту кнопкой ниже.
                 """, Attachments.fileWithKeyboard(uploadPayload, Keyboards.inline(buttons)));
+    }
+
+    private void showExcelEmailChooser(BotUser user) {
+        if (!user.role().canViewReports()) {
+            sendToUser(user.maxUserId(), "Отправка Excel доступна только руководящим ролям.", homeButtons(user));
+            return;
+        }
+        ConversationSession session = repository.getSession(user.maxUserId());
+        if (session.data().path("last_excel_path").asText("").isBlank()) {
+            sendToUser(user.maxUserId(), "Сначала сформируйте Excel-файл, потом его можно будет отправить на почту.", homeButtons(user));
+            return;
+        }
+        List<ReportEmail> emails = repository.listReportEmails();
+        if (emails.isEmpty()) {
+            List<ObjectNode> buttons = new ArrayList<>();
+            if (user.role().isAdmin()) {
+                buttons.add(Keyboards.callback("➕ Добавить почту", "admin:email:add"));
+            }
+            buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
+            sendToUser(user.maxUserId(), """
+                    📧 *Почты не добавлены*
+
+                    Администратор может добавить адреса в разделе почт.
+                    """, buttons);
+            return;
+        }
+
+        List<ObjectNode> buttons = new ArrayList<>();
+        for (ReportEmail email : emails) {
+            buttons.add(Keyboards.callback("📧 " + email.email(), "excel:email:send:" + email.id()));
+        }
+        buttons.add(Keyboards.callback("🏠 Главное меню", "nav:home"));
+        sendToUser(user.maxUserId(), "📧 *Выберите почту*\n\nОтправлю последний сформированный Excel-файл на выбранный адрес.", buttons);
+    }
+
+    private void sendLastExcelReportByEmail(BotUser user, long emailId) {
+        if (!user.role().canViewReports()) {
+            sendToUser(user.maxUserId(), "Отправка Excel доступна только руководящим ролям.", homeButtons(user));
+            return;
+        }
+        ReportEmail email = repository.findReportEmail(emailId).orElse(null);
+        if (email == null) {
+            sendToUser(user.maxUserId(), "Этот адрес уже удалён. Откройте список почт заново.", reportResultButtons());
+            return;
+        }
+        ConversationSession session = repository.getSession(user.maxUserId());
+        String pathText = session.data().path("last_excel_path").asText("");
+        String fileName = session.data().path("last_excel_filename").asText("milk-report.xlsx");
+        String title = session.data().path("last_excel_title").asText("Excel-отчёт");
+        if (pathText.isBlank()) {
+            sendToUser(user.maxUserId(), "Не нашёл последний Excel-файл. Сформируйте отчёт заново.", homeButtons(user));
+            return;
+        }
+        Path file = Path.of(pathText);
+        if (!Files.exists(file)) {
+            sendToUser(user.maxUserId(), "Файл отчёта уже недоступен. Сформируйте Excel заново и отправьте его сразу после создания.", homeButtons(user));
+            return;
+        }
+        if (!emailService.isConfigured()) {
+            sendToUser(user.maxUserId(), """
+                    ⚠️ Отправка почты пока не настроена.
+
+                    Нужно задать переменные окружения `SMTP_HOST`, `SMTP_FROM` и при необходимости `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_PORT`.
+                    """, reportResultButtons());
+            return;
+        }
+
+        emailService.sendExcelReport(
+                email.email(),
+                file,
+                fileName,
+                title,
+                "Во вложении Excel-отчёт из бота приёмки молока."
+        );
+        sendToUser(user.maxUserId(), "✅ Excel-файл отправлен на `" + email.email() + "`.", reportResultButtons());
+    }
+
+    private void rememberLastExcelReport(BotUser user, Path file, String fileName, String title) {
+        ConversationSession session = repository.getSession(user.maxUserId());
+        ObjectNode data = editableData(session);
+        data.put("last_excel_path", file.toAbsolutePath().toString());
+        data.put("last_excel_filename", fileName);
+        data.put("last_excel_title", title);
+        repository.saveSession(user.maxUserId(), session.state(), data);
+    }
+
+    private String safeReportFileName(String baseName, LocalDate start, LocalDate end) {
+        String safeBase = baseName.toLowerCase()
+                .replaceAll("[^\\p{L}\\p{N}]+", "-")
+                .replaceAll("(^-+|-+$)", "");
+        return "%s-%s-%s.xlsx".formatted(safeBase, start, end);
     }
 
     private void toggleDigest(BotUser user) {
@@ -1992,6 +2196,7 @@ public class BotService {
                 Keyboards.callback("👥 Заявки на доступ", "admin:requests"),
                 Keyboards.callback("🧑‍💼 Пользователи", "admin:users"),
                 Keyboards.callback("🌾 Колхозы", "admin:farms"),
+                Keyboards.callback("📧 Почты", "admin:emails"),
                 Keyboards.callback("➕ Добавить приёмку", "admin:receipt:new"),
                 Keyboards.callback("✏️ Записи", "admin:records"),
                 Keyboards.callback("📊 Сводка за день", "digest:today"),
@@ -2112,6 +2317,14 @@ public class BotService {
             case "phone", "first_name", "last_name" -> trimmed;
             default -> trimmed;
         };
+    }
+
+    private String normalizeEmail(String text) {
+        if (text == null) {
+            return null;
+        }
+        String email = text.trim().toLowerCase();
+        return EMAIL_PATTERN.matcher(email).matches() ? email : null;
     }
 
     private boolean handleGlobalCommand(BotUser user, String text) {
@@ -2339,6 +2552,7 @@ public class BotService {
             case "👥 Заявки на доступ" -> "admin:requests";
             case "🧑‍💼 Пользователи" -> "admin:users";
             case "🌾 Колхозы" -> "admin:farms";
+            case "📧 Почты" -> "admin:emails";
             case "➕ Добавить приёмку" -> "admin:receipt:new";
             case "✏️ Записи" -> "admin:records";
             case "⚠️ Сохранить без фото" -> "receipt:skip-photo";

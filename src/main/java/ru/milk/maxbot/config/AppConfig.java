@@ -17,7 +17,14 @@ public record AppConfig(
         int longPollTimeoutSeconds,
         LocalTime shiftSummaryTime,
         boolean autoRotatePortraitImages,
-        Set<Long> bootstrapAdminUserIds
+        Set<Long> bootstrapAdminUserIds,
+        String smtpHost,
+        int smtpPort,
+        String smtpUsername,
+        String smtpPassword,
+        String smtpFrom,
+        boolean smtpStartTls,
+        boolean smtpSsl
 ) {
 
     public static AppConfig load() {
@@ -30,6 +37,13 @@ public record AppConfig(
         LocalTime shiftSummaryTime = LocalTime.parse(env("MILK_SHIFT_SUMMARY_TIME", "20:00"));
         boolean autoRotate = Boolean.parseBoolean(env("MILK_AUTO_ROTATE_PORTRAIT_IMAGES", "true"));
         Set<Long> adminIds = parseIds(env("BOOTSTRAP_ADMIN_USER_IDS", ""));
+        String smtpHost = env("SMTP_HOST", "");
+        int smtpPort = Integer.parseInt(env("SMTP_PORT", "587"));
+        String smtpUsername = env("SMTP_USERNAME", "");
+        String smtpPassword = env("SMTP_PASSWORD", "");
+        String smtpFrom = env("SMTP_FROM", smtpUsername);
+        boolean smtpStartTls = Boolean.parseBoolean(env("SMTP_STARTTLS", "true"));
+        boolean smtpSsl = Boolean.parseBoolean(env("SMTP_SSL", "false"));
         return new AppConfig(
                 botToken,
                 dbPath,
@@ -39,7 +53,14 @@ public record AppConfig(
                 longPollTimeout,
                 shiftSummaryTime,
                 autoRotate,
-                adminIds
+                adminIds,
+                smtpHost,
+                smtpPort,
+                smtpUsername,
+                smtpPassword,
+                smtpFrom,
+                smtpStartTls,
+                smtpSsl
         );
     }
 

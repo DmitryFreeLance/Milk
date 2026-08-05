@@ -138,6 +138,14 @@ public class Database {
                         FOREIGN KEY (recipient_user_id) REFERENCES users (id)
                     )
                     """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS report_emails (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT NOT NULL UNIQUE,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """);
 
             seedReferenceData(connection);
             log.info("Database initialized at {}", config.dbPath().toAbsolutePath());

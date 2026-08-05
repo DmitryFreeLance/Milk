@@ -9,6 +9,7 @@ import ru.milk.maxbot.domain.MilkReceipt;
 import ru.milk.maxbot.domain.NamedSummary;
 import ru.milk.maxbot.domain.PendingRegistration;
 import ru.milk.maxbot.domain.ReceivingPoint;
+import ru.milk.maxbot.domain.ReportEmail;
 import ru.milk.maxbot.domain.StatsSummary;
 import ru.milk.maxbot.domain.UserRole;
 import ru.milk.maxbot.util.Jsons;
@@ -300,6 +301,62 @@ public class BotRepository {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update farm", e);
+        }
+    }
+
+    public List<ReportEmail> listReportEmails() {
+        String sql = "SELECT * FROM report_emails ORDER BY email";
+        try (Connection connection = database.getConnection();
+             PreparedStatement ps = connection.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            List<ReportEmail> emails = new ArrayList<>();
+            while (rs.next()) {
+                emails.add(mapReportEmail(rs));
+            }
+            return emails;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list report emails", e);
+        }
+    }
+
+    public Optional<ReportEmail> findReportEmail(long id) {
+        String sql = "SELECT * FROM report_emails WHERE id = ?";
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(mapReportEmail(rs));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to find report email", e);
+        }
+    }
+
+    public void addReportEmail(String email) {
+        String now = Instant.now().toString();
+        String sql = """
+                INSERT OR IGNORE INTO report_emails (email, created_at, updated_at)
+                VALUES (?, ?, ?)
+                """;
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, email.trim().toLowerCase());
+            ps.setString(2, now);
+            ps.setString(3, now);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to add report email", e);
+        }
+    }
+
+    public void deleteReportEmail(long id) {
+        String sql = "DELETE FROM report_emails WHERE id = ?";
+        try (Connection connection = database.getConnection(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete report email", e);
         }
     }
 
@@ -1086,6 +1143,15 @@ public class BotRepository {
                 nullableLong(rs, "receiving_point_id"),
                 rs.getInt("active") == 1,
                 rs.getInt("daily_digest_enabled") == 1
+        );
+    }
+
+    private ReportEmail mapReportEmail(ResultSet rs) throws SQLException {
+        return new ReportEmail(
+                rs.getLong("id"),
+                rs.getString("email"),
+                Instant.parse(rs.getString("created_at")),
+                Instant.parse(rs.getString("updated_at"))
         );
     }
 
